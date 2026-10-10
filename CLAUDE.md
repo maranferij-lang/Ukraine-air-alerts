@@ -13,3 +13,5 @@ rules. dont break these without asking me first:
 - everything you decide, find or break goes in PROCESS_LOG.md in the same round, before the commit
 - one commit per round, at the end of the round
 - if something i ask for looks wrong, say so before doing it. id rather be told
+- volunteer feed: lviv and volyn are mislabelled upstream (substring bug in the parser). never compare western oblasts with volunteer numbers
+- rows after the outage use 7-day features scaled from the observed hours. always report them separately next to the pooled numbers
