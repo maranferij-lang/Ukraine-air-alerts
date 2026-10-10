@@ -23,6 +23,9 @@ Ground rules (fixed):
 regression and a post-switch-only fit, next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
+**Branch `news`:** main plus one experiment, a GDELT news-intensity feature. It did not help;
+see "News and text data" below.
+
 ## Data
 
 [Vadimkin/ukrainian-air-raid-sirens-dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset)
@@ -202,7 +205,72 @@ We did not use the alert messages themselves, or any news or Telegram text.
 - A text feature would have to come from sources other than the alert channels, timestamped
   strictly before t.
 
-No text experiment has been run. This section is where one would go.
+### Experiment: national news intensity from GDELT (branch `news` only, not merged)
+**What we tried.**
+- **Source:** GDELT 2.0 event files, 2026-01-01 → 09-07 (`scripts/fetch_gdelt_events.py`). Only the
+  hourly aggregate is committed (`data/news/`); the raw files can be re-pulled with the script.
+- **Content:** events located in Ukraine (ActionGeo country `UP`) with CAMEO root code 18 (assault),
+  19 (fight) or 20 (unconventional mass violence). One national number per hour.
+- **No oblast split:** the region field is dominated by Kyiv City (capital datelines) and has
+  geocoding errors, e.g. Brovary filed under Ternopil.
+- **Two features for origin t** (`src/news.py`):
+  - `news_24h`: events added in [t−25h, t−1h);
+  - `news_yesterday`: events added during the last full UTC day that ended by t−1h.
+
+**Leakage rule.**
+- The clock is **when a record was added to GDELT** (DATEADDED), never the event date.
+- A record counts at t only if it was added before t−1h, the same lag as the neighbour features.
+- Every record's DATEADDED equals the timestamp of the 15-minute file it arrived in.
+- `scripts/check_no_peeking_news.py` (output in `results/news/no_peeking.txt`):
+  - recomputes both columns for the 40 test origins from records added before t−1h only: 0 mismatches
+    in 80 values;
+  - negative control (a 24h window ending at t instead of t−1h): mismatches at 40 of 40 origins.
+
+**Fair test.**
+- "LightGBM from 2026-01-01" with and without the two columns: same rows, split, training rows
+  (2026-01-01 up to the test month) and thresholds.
+- The first 25 hours of 2026 have no full news window. They stay in training as missing values.
+- Every row except "+ news" reproduces main's `results/test_table.csv` exactly.
+
+**Before the model:** is news just a slower copy of the alert history? No
+(`results/news/correlation.md`, training rows). `news_24h` vs `starts_7d`: Pearson 0.071 within
+oblast, 0.244 nationally per hour.
+
+**Results.** New alert within H hours (b), within-oblast AUC / Brier (`results/news/test_table.md`,
+`results/news/test_table_by_period.md`):
+
+| H | 2026 + news | 2026 | full history (main) | same as now | same hour yesterday | train frequency |
+|---|---|---|---|---|---|---|
+| all 24 days, 1 | 0.621 / 0.087 | 0.648 / 0.087 | 0.688 / 0.087 | 0.438 / 0.288 | 0.525 / 0.181 | 0.495 / 0.101 |
+| all 24 days, 3 | 0.578 / 0.144 | 0.642 / 0.142 | 0.645 / 0.145 | 0.480 / 0.327 | 0.524 / 0.281 | 0.581 / 0.177 |
+| all 24 days, 6 | 0.616 / 0.140 | 0.619 / 0.139 | 0.639 / 0.140 | 0.489 / 0.365 | 0.516 / 0.267 | 0.612 / 0.178 |
+| Sep 4–5, 1 | 0.588 / 0.097 | 0.555 / 0.096 | 0.534 / 0.098 | 0.359 / 0.365 | 0.538 / 0.218 | 0.466 / 0.119 |
+| Sep 4–5, 3 | 0.517 / 0.159 | 0.471 / 0.159 | 0.476 / 0.158 | 0.395 / 0.425 | 0.519 / 0.297 | 0.424 / 0.218 |
+| Sep 4–5, 6 | 0.458 / 0.125 | 0.440 / 0.122 | 0.447 / 0.120 | 0.392 / 0.444 | 0.501 / 0.196 | 0.409 / 0.203 |
+
+Paired comparison, "with news" minus "without" (`results/news/news_vs_no_news.md`):
+- 95% day-block bootstrap interval for the AUC difference (whole test days resampled):
+  - H=1: −0.0272 [−0.0559, 0.0238];
+  - H=3: −0.0638 [−0.1067, 0.0267];
+  - H=6: −0.0023 [−0.0258, 0.0267].
+- Same for the Brier difference:
+  - H=1: 0.0002 [−0.0001, 0.0005];
+  - H=3: 0.0014 [0.0005, 0.0024];
+  - H=6: 0.0011 [0.0002, 0.0019].
+- Oblasts where news gives the higher AUC, all 24 days: 12, 11 and 12 of 24.
+
+Feature importance (`results/news/feature_importance.md`):
+- The news columns rank 9–10 (H=1), 7 and 10 (H=3), 4 and 8 (H=6) of 16 by gain, with 2–4% of the
+  gain each.
+- They take 10–17% of the splits.
+
+**Verdict: news does not help.**
+- Within-oblast AUC is lower with news at H=1 and H=3 and about the same at H=6. All three
+  intervals include zero.
+- Brier is slightly worse, and the interval is above zero at H=3 and H=6.
+- On Sep 4–5 the news model has the higher AUC at every H. That is 48 origins per oblast, so it
+  shows nothing either way.
+- The branch stays as a record; main is not changed.
 
 ## Limitations and what we would do next
 Limitations:
@@ -242,6 +310,12 @@ python scripts/plot_weekly.py        # figures/alerts_per_week.png (+ .csv)
 python scripts/hand_checks.py        # round-1 hand-check numbers (needs the three panels)
 python scripts/evaluate.py           # model + baselines: tables in results/, H=6 plots
 python scripts/check_no_peeking.py   # leakage check: baseline inputs and model features
+# news experiment (branch news)
+python scripts/fetch_gdelt_events.py # optional: re-pull GDELT events, about 9 minutes -> data/news/
+python scripts/check_gdelt_events.py # gaps, heavy days, figures/gdelt_weekly.png
+python scripts/news_correlation.py   # news vs starts_7d / share_7d on training rows
+python scripts/evaluate_news.py      # 2026 model with and without news -> results/news/
+python scripts/check_no_peeking_news.py  # leakage check for the news columns
 ```
 
 ## Definitions
@@ -290,7 +364,9 @@ src/features.py      model features (all known at t)
 src/logit.py         plain logistic regression (Newton / IRLS), the comparison model
 src/baselines.py     the three baselines
 src/metrics.py       Brier (+ decomposition), AUC, precision/recall/F1, max-F1 threshold
+src/news.py          national GDELT news features (branch news)
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features
+data/news/           GDELT hourly aggregate + pull record (branch news)
 scripts/             one script per step, run from the repo root
 results/             evaluation tables
 figures/             plots and the tables behind them

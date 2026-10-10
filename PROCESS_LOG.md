@@ -856,3 +856,112 @@ Experiment, not a deliverable. `main` stays as it is; everything here lives on `
 
 This is a safety commit of step 1 on the experiment branch, by agreement. The one-commit-per-round rule applies to
 `main`.
+
+## 2026-10-10 — News experiment, step 2: features, correlation first, then the model
+
+### Features (`src/news.py`)
+- Both features are **national** (one value per hour, the same for every oblast). They count conflict events
+  (CAMEO 18/19/20) located in Ukraine.
+  - `news_24h`: events added to GDELT in [t−25h, t−1h).
+  - `news_yesterday`: events added during the last full UTC day that ended by t−1h. For t = 00:00 that is the day
+    before yesterday, because yesterday's last hour is not complete by t−1h.
+- **Leakage rule:** a record counts at origin t only if its DATEADDED is before t−1h, the same lag as the
+  neighbours. The event date is never used.
+- The first 25 hours of 2026 (600 train rows) have no full window: NaN, which LightGBM handles. They are not
+  dropped, so the rows stay the same. Test rows all have both features.
+- The one partial hour (2026-05-09 23:00, 3 of 4 files) is left unscaled. It touches 24 hourly windows and one day.
+
+### Correlation with what the model already has (`scripts/news_correlation.py` → `results/news/correlation.md`)
+Written down before the model was run. Train rows of "LightGBM from 2026-01-01", H=1: 124,968 rows,
+2026-01-02 01:00 → 08-06 23:00.
+
+| | starts_7d | share_7d | starts_24h |
+|---|---|---|---|
+| `news_24h`, within oblast (Pearson / Spearman) | 0.071 / 0.053 | 0.076 / 0.073 | 0.069 / 0.079 |
+| `news_24h`, national per hour (Pearson / Spearman) | 0.244 / 0.250 | 0.204 / 0.238 | 0.182 / 0.238 |
+| `news_yesterday`, national (Pearson / Spearman) | 0.222 / 0.232 | 0.187 / 0.214 | 0.122 / 0.175 |
+
+- Pooled correlation over all rows is 0.01–0.06.
+- **The user's guess (high correlation: news is a slower copy of starts_7d) does not hold on these numbers.**
+  The national level co-moves weakly (about 0.2–0.25), and within an oblast there is almost no linear or rank
+  relation.
+- Low correlation does not mean the feature helps. Mostly it says the series carries something different, which
+  may be noise. The daily link to alert starts was already weak in step 1 (Spearman 0.23–0.28).
+
+### The model comparison (`scripts/evaluate_news.py` → `results/news/`)
+**Setup.**
+- "LightGBM from 2026-01-01" with and without `news_24h` + `news_yesterday`.
+- Same rows, split, 2026 training rows (125,568 / 125,520 / 125,448 for H=1/3/6, 600 of them with NaN news),
+  same validation fit and last-week threshold as main.
+- Next to them: main's full-history LightGBM (no news, since there is no news history before 2026) and the three
+  baselines.
+- **Reproduction check:** the 90 rows shared with main's `results/test_table.csv` are identical in all 720
+  compared values. So the only difference between the two 2026 models is the two columns.
+
+**Target (b), within-oblast AUC / Brier, all 24 days** (from `results/news/test_table.md`):
+- H=1: 0.621 / 0.087 with news vs 0.648 / 0.087 without.
+- H=3: 0.578 / 0.144 vs 0.642 / 0.142.
+- H=6: 0.616 / 0.140 vs 0.619 / 0.139.
+- Baselines are unchanged from main. The best on Brier is still frequency: 0.101 / 0.177 / 0.178.
+
+**Sep 4–5 alone:**
+- H=1: 0.588 / 0.097 vs 0.555 / 0.096.
+- H=3: 0.517 / 0.159 vs 0.471 / 0.159.
+- H=6: 0.458 / 0.125 vs 0.440 / 0.122.
+- News is higher on AUC at every H here, but this is 48 origins per oblast.
+
+**Paired, day-block bootstrap** (1000 resamples of the 24 test days, seed 0, `results/news/news_vs_no_news.md`).
+Figures are with news minus without, point value and 95% interval.
+
+| H | AUC difference | Brier difference |
+|---|---|---|
+| 1 | −0.0272 [−0.0559, 0.0238] | +0.0002 [−0.0001, 0.0005] |
+| 3 | −0.0638 [−0.1067, 0.0267] | +0.0014 [0.0005, 0.0024] |
+| 6 | −0.0023 [−0.0258, 0.0267] | +0.0011 [0.0002, 0.0019] |
+
+- News has the higher AUC in 12 / 11 / 12 of 24 oblasts.
+- I added the bootstrap because 24 days are too few to read a 0.003 difference by eye. It is a sanity check, not
+  a test I would put weight on.
+
+**Importance and early stopping:**
+- The news columns rank 9–10 (H=1), 7 and 10 (H=3), 4 and 8 (H=6) of 16 by gain, with 2–4% of the gain each,
+  but 10–17% of the splits.
+- Early stopping on the last train week stops sooner with news: 80 / 64 / 60 trees vs 122 / 158 / 101.
+- So the trees split on the news columns often, for little gain, and the validation loss turns up sooner. That
+  pattern is consistent with a national time series being used to tell training periods apart. I did not test
+  this further.
+
+**Verdict: news does not help.**
+- AUC is lower at H=1 and H=3 and level at H=6, with all intervals including zero.
+- Brier is slightly worse, with the interval above zero at H=3 and H=6.
+- Not merged, by the rule agreed up front. The branch stays.
+
+### Leakage check for the news columns (`scripts/check_no_peeking_news.py`, `results/news/no_peeking.txt`)
+- Same 40 origins as `check_no_peeking.py`. For each one, the GDELT buckets are cut to records added before
+  t−1h, and both columns are recomputed two ways: with `src/news.py` and by a direct sum.
+  - Result: 0 mismatches in 80 values, both ways.
+- The columns are identical across oblasts at every t, as a national series should be.
+- **Negative control:** a 24h window ending at t instead of t−1h. It mismatches at 40 of 40 origins, which is
+  every origin that had events in [t−1h, t).
+- **Publication time:** I fetched the Last-Modified header of four GDELT files (Jan 15, May 9, Aug 20, Sep 5).
+  Each was written 11–12 minutes *before* its slot timestamp, so a record's DATEADDED is not earlier than its
+  publication. With the t−1h rule, the newest record used was public at least about an hour before t.
+
+### Housekeeping
+- `src/news.py`: the grid check first used `.asi8` in nanoseconds. pandas 3 parses these timestamps in
+  microseconds, so a complete grid failed the check. The check now compares Timedeltas.
+- README numbers were checked against `results/news`:
+  - Checking against the 4-dp CSV first gave 5 "mismatches". That is the known double rounding again: e.g.
+    Brier 0.0865 in the CSV is 0.087 in the md table, which rounds once from full precision. The README is
+    copied from the md tables, and all 36 cells match those.
+  - I dropped the event count (57,795) from the README because it is not in `results/`. It stays here and in
+    the step-1 entry.
+- Re-ran correlation, evaluation and the leakage check from scratch: `results/news/` is byte-identical (`diff -r`).
+- `main` is untouched.
+- **Proposed for main, not applied (waiting for the user):** two sentences in main's README "News and text data"
+  section, in place of "No text experiment has been run":
+  > We tried one news feature in the 2026-only LightGBM: the national hourly count of GDELT conflict events
+  > located in Ukraine, timed by when each record was added to GDELT and lagged one hour. It did not improve
+  > within-oblast AUC or Brier at any H; the numbers, next to the three baselines, are on branch `news`.
+- The proposal has no numbers on purpose. A model number on main without its baselines would break the README
+  rule, and the full table belongs on the branch.
