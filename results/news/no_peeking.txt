@@ -1,0 +1,5 @@
+origins: 40 from 2026-08-07 10:00:00+00:00 to 2026-09-05 02:00:00+00:00 (same as check_no_peeking.py)
+news columns from GDELT records added before t-1h, src/news.py: 80 values, mismatches 0
+news columns from GDELT records added before t-1h, direct sum: 80 values, mismatches 0
+news columns identical across oblasts at every t: yes (39240 hours)
+negative control, 24h window ending at t: 40 mismatches of 40 origins (40 origins had events in [t-1h, t))
