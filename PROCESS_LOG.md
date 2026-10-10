@@ -802,3 +802,57 @@ Both were already true of the round-4 outputs. The README now also has a Sep 4�
 
 ### 4. After this commit
 `main` is left alone. Any further experiment goes on a branch.
+
+---
+
+## 2026-10-10 — News experiment (branch `news`), step 1: GDELT events pull
+
+Experiment, not a deliverable. `main` stays as it is; everything here lives on `news`.
+
+### Source scouting
+- First attempt: the environment's network policy denied `api.gdeltproject.org`, `data.gdeltproject.org`,
+  `wikimedia.org` and `dumps.wikimedia.org`. The user then set network access to full.
+- **GDELT DOC API** (keyword timelines; about the last 3 months, per my knowledge, not verified): every request was
+  answered with 429 "limit requests to one every 5 seconds". This included a single request after two idle minutes,
+  so the shared outbound IP is rate-limited. Depth and resolution could not be checked.
+- **Wikipedia:** the per-article pageviews API is daily or monthly only; asking for hourly returns 400. Hourly data
+  exists only in whole-Wikipedia dump files, about 55 MB per hour (~120 GB for 3 months).
+- **GDELT raw 15-minute files:** reachable, not rate-limited, back past March 2022.
+- **Picked (user):** GDELT 2.0 *events* files, 2026-01-01 → 2026-09-07. They are compared against the existing
+  "LightGBM from 2026-01-01", so no full-history pull is needed.
+
+### Pull (`scripts/fetch_gdelt_events.py` → `data/news/`)
+- Each 15-minute export file is read in memory; only aggregated counts are kept. Raw files are not committed.
+- Rows kept: `ActionGeo_CountryCode == "UP"` (event located in Ukraine).
+- **CAMEO choice:** conflict = root codes 18 (assault), 19 (fight), 20 (unconventional mass violence). The aerial
+  subset (CAMEO 195x, aerial weapons incl. drones) is kept as a column but is too thin to use (median day: 8 events).
+- **Timestamp = DATEADDED** (when the record entered GDELT), floored to the hour. **Not** the event date. A sample
+  record added 2026-04-15 describes an event dated 2026-03-16.
+- Result:
+  - 23,999 of 24,000 files (one missing: 2026-05-09 23:xx);
+  - 372,499 Ukraine-located events, of which 57,795 are conflict;
+  - every record's DATEADDED equals its file's slot (0 mismatches);
+  - 9 minutes to pull.
+- **Leakage rule** for the model features: for origin t, only records with DATEADDED before t−1h count, the same lag
+  as the neighbour features.
+
+### Sanity check (`scripts/check_gdelt_events.py`, `figures/gdelt_weekly.png`)
+- **Gaps:** one partial hour (2026-05-09 23:00, 3 of 4 files). No complete hour has zero Ukraine events.
+- **Weekly level** co-moves with official alert starts. GDELT conflict goes from ~1,100–1,600/week in Jan–Apr to
+  ~1,900–2,300 in Jun–Aug; alert starts from ~300–400 to ~450–550.
+- **Daily link is weak:**
+  - On the 10 days with all 24 oblasts under alert at some point, GDELT conflict counts were 107–379, against a
+    median day of 216. About half are below the median.
+  - Spearman correlation with daily alert starts is 0.23–0.28, the same day or the next.
+- **Fixed in the plot:** it first marked the partial edge weeks (Jan 1–4, Sep 7) as gaps. Now partial weeks are
+  dropped, and only the week with the missing file (May 4) is grey.
+
+### Oblast split: dropped (user decision)
+- 72% of conflict events carry an ADM1 code, and the codes map 1:1 onto our units. But:
+  - Kyiv City dominates (17,151 events), presumably the capital dateline;
+  - there are geocoding errors ("Brovary, Ternopil's'ka Oblast'");
+  - western oblasts have 57–240 events in 8 months.
+- **National series only.** `gdelt_adm1_names.csv` is kept as the record; the per-region hourly file is git-ignored.
+
+This is a safety commit of step 1 on the experiment branch, by agreement. The one-commit-per-round rule applies to
+`main`.
