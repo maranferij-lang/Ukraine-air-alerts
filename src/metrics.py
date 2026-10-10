@@ -44,3 +44,49 @@ def best_f1_threshold(y, p):
     f1 = 2 * tp / (2 * tp + fp + (y.sum() - tp))
     best = np.flatnonzero(f1 == f1.max())[0]  # thresholds are in descending order
     return float(thr[best])
+
+
+def summarize(y, p, oblast, threshold=None):
+    """One table row for a predictor on the evaluation rows. threshold=None means p is already
+    a 0/1 prediction and precision/recall are taken as is (no threshold search)."""
+    y = pd.Series(np.asarray(y, bool))
+    p = pd.Series(np.asarray(p, float))
+    oblast = pd.Series(np.asarray(oblast))
+    within = [auc(y[g], p[g]) for g in oblast.groupby(oblast).groups.values()]
+    precision, recall, f1 = precision_recall_f1(y, p, 0.5 if threshold is None else threshold)
+    return {
+        "auc_within_oblast": float(np.nanmean(within)), "n_oblasts_auc": int(np.sum(~np.isnan(within))),
+        "brier": brier(y, p), "auc_pooled": auc(y, p),
+        "threshold": "raw 0/1" if threshold is None else round(float(threshold), 3),
+        "precision": precision, "recall": recall, "f1": f1,
+    }
+
+
+def brier_decomposition(y, p, bins=10):
+    """Murphy decomposition with equal-width probability bins:
+    Brier ~= reliability - resolution + uncertainty. reliability (lower is better) measures
+    miscalibration, resolution (higher is better) how far bin outcomes move away from the base
+    rate. The two sides differ by the within-bin spread of p, reported as 'residual'."""
+    y = np.asarray(y, float)
+    p = np.asarray(p, float)
+    k = np.minimum((p * bins).astype(int), bins - 1)
+    n, base = len(y), y.mean()
+    rel = res = 0.0
+    for b in np.unique(k):
+        m = k == b
+        rel += m.sum() * (p[m].mean() - y[m].mean()) ** 2
+        res += m.sum() * (y[m].mean() - base) ** 2
+    rel, res, unc = rel / n, res / n, base * (1 - base)
+    bs = brier(y, p)
+    return {"brier": bs, "reliability": rel, "resolution": res, "uncertainty": unc,
+            "residual": bs - (rel - res + unc)}
+
+
+def reliability_table(y, p, bins=10):
+    y = np.asarray(y, float)
+    p = np.asarray(p, float)
+    k = np.minimum((p * bins).astype(int), bins - 1)
+    df = pd.DataFrame({"bin": k, "p": p, "y": y}).groupby("bin").agg(
+        mean_predicted=("p", "mean"), observed=("y", "mean"), n=("y", "size"))
+    df.index = [f"{b / bins:.1f}-{(b + 1) / bins:.1f}" for b in df.index]
+    return df
