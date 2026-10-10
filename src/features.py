@@ -8,6 +8,8 @@ joins the previous alert is decided at the start itself, so starts up to t are k
   hours_since_end   hours since the last alert ended (capped at 720 = 30 days)
   share_6h/24h/7d   share of time under alert in [t-w, t]
   starts_24h/7d     alert starts in (t-w, t]
+  Windows that overlap a known outage (OFFICIAL_OUTAGES) are computed over the observed part
+  only: shares over the observed time, counts scaled up to the full window length.
 Neighbours, last completed hour only ("lagged one hour"):
   nb_share_1h       share of neighbouring oblasts under alert at some point in [t-1h, t)
   nb_starts_6h      alert starts in neighbouring oblasts in [t-6h, t)
@@ -30,6 +32,7 @@ from .targets import _per_oblast, touches, y_start
 NEIGHBOURS_CSV = Path(__file__).resolve().parents[1] / "data" / "neighbours.csv"
 HOURS_SINCE_CAP = 720.0
 NS_PER_HOUR = 3600 * 10**9
+MASKS = [(pd.Timestamp(a, tz="UTC").value, pd.Timestamp(b, tz="UTC").value) for a, b in OFFICIAL_OUTAGES]
 
 
 def load_neighbours(path=NEIGHBOURS_CSV):
@@ -61,14 +64,26 @@ def _own(starts, ends, joined_starts, t):
         ii = np.maximum(i, 0)
         partial = np.where(i >= 0, np.minimum(x, ends[ii]) - starts[ii], 0)
         return cum[ii] * (i >= 0) + partial
-    for name, hours in [("share_6h", 6), ("share_24h", 24), ("share_7d", 168)]:
-        w = hours * NS_PER_HOUR
-        out[name] = (covered_until(t) - covered_until(t - w)) / w
+    def n_starts(lo, hi):  # joined starts in (lo, hi]
+        return (np.searchsorted(joined_starts, hi, side="right")
+                - np.searchsorted(joined_starts, lo, side="right"))
 
-    for name, hours in [("starts_24h", 24), ("starts_7d", 168)]:
+    for hours in [6, 24, 168]:
         w = hours * NS_PER_HOUR
-        out[name] = (np.searchsorted(joined_starts, t, side="right")
-                     - np.searchsorted(joined_starts, t - w, side="right")).astype(float)
+        masked, covered_masked, starts_masked = np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)
+        for m0, m1 in MASKS:  # the part of [t-w, t] inside each outage
+            lo, hi = np.maximum(t - w, m0), np.minimum(t, m1)
+            inside = hi > lo
+            hi = np.where(inside, hi, lo)
+            masked = masked + (hi - lo)
+            covered_masked = covered_masked + (covered_until(hi) - covered_until(lo))
+            starts_masked = starts_masked + n_starts(lo, hi)
+        observed = (w - masked).astype(float)
+        observed[observed <= 0] = np.nan
+        suffix = "7d" if hours == 168 else f"{hours}h"
+        out[f"share_{suffix}"] = (covered_until(t) - covered_until(t - w) - covered_masked) / observed
+        if hours != 6:
+            out[f"starts_{suffix}"] = (n_starts(t - w, t) - starts_masked) * (w / observed)
     return out
 
 

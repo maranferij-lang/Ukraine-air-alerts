@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from src.dataset import HORIZONS, TEST_DAYS, build_rows, load_inputs, split
+from src.dataset import EVAL_LOOKBACK, HORIZONS, TEST_DAYS, build_rows, load_inputs, split
 from src.features import FEATURES, build_features, load_neighbours
 from src.panel import official_episodes
 from src.targets import active_now, make_rows, y_active, y_start
@@ -56,7 +56,9 @@ def main():
     # same origins as round 2: H=6 test rows under the 24h-lookback split, seed 0
     test_r2 = split(rows, first, end, test_start, 6, pd.Timedelta(hours=24))["test"]
     origins = rows.loc[test_r2, "t"].drop_duplicates().sample(N_ORIGINS, random_state=0).sort_values()
-    print(f"origins: {N_ORIGINS} from {origins.min()} to {origins.max()}")
+    print(f"origins: {N_ORIGINS} from {origins.min()} to {origins.max()}; "
+          f"{(origins >= pd.Timestamp('2026-09-03', tz='UTC')).sum()} of them after the outage, where the "
+          f"7-day features are computed over the observed part of their window")
 
     checked = mism_base = mism_feat = 0
     ctrl_target = ctrl_feature = ctrl_target_pos = 0
@@ -97,7 +99,7 @@ def main():
     print(f"negative control, share_6h evaluated at t+1h: {ctrl_feature} mismatches of {N_ORIGINS * len(oblasts)}")
 
     for H in HORIZONS:
-        m = split(rows, first, end, test_start, H, pd.Timedelta(days=7))
+        m = split(rows, first, end, test_start, H, EVAL_LOOKBACK)
         h = pd.Timedelta(hours=H)
         week_start = test_start - pd.Timedelta(days=7)
         train_close = (rows.loc[m["train"], "t"] + h).max()

@@ -8,6 +8,11 @@ from .targets import active_now, make_rows, touches, y_active, y_start
 HORIZONS = [1, 3, 6]
 TEST_DAYS = 30       # test = last 30 full days of official data
 THRESHOLD_DAYS = 7   # thresholds (and early stopping) are chosen on the last week of train
+# rows must have [t-24h, t+H] clear of outages: same-hour-yesterday and the 24h features need it.
+# 7-day features are computed over the observed part of their window instead (src/features.py).
+EVAL_LOOKBACK = pd.Timedelta(hours=24)
+# features look back up to 7 days, so no row is used before 7 days of history exist
+FEATURE_HISTORY = pd.Timedelta(days=7)
 
 
 def load_inputs():
@@ -39,8 +44,8 @@ def build_rows(official=None, raions=None):
 def split(rows, first, end, test_start, H, lookback):
     """Boolean masks for horizon H.
 
-    usable:           lookback [t - lookback, t] and target window (t, t+H] inside the data and
-                      away from known outages
+    usable:           at least FEATURE_HISTORY of data before t, target window (t, t+H] inside the
+                      data, and [t - lookback, t + H] away from known outages
     test:             usable, t >= test_start
     train:            usable, target window closes by test_start
     last_week:        the last THRESHOLD_DAYS of train (thresholds, early stopping)
@@ -48,7 +53,7 @@ def split(rows, first, end, test_start, H, lookback):
     """
     h = pd.Timedelta(hours=H)
     week_start = test_start - pd.Timedelta(days=THRESHOLD_DAYS)
-    usable = ((rows["t"] - lookback >= first) & (rows["t"] + h <= end)
+    usable = ((rows["t"] - max(lookback, FEATURE_HISTORY) >= first) & (rows["t"] + h <= end)
               & ~touches(rows, OFFICIAL_OUTAGES, before=lookback, after=h))
     test = usable & (rows["t"] >= test_start)
     train = usable & (rows["t"] + h <= test_start)

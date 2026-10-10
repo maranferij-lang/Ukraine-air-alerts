@@ -12,7 +12,8 @@ Ground rules (fixed):
   plain accuracy.
 - Working rules for this repo are in `CLAUDE.md`.
 
-**Status:** round 3. One LightGBM model for target (b), evaluated next to the three baselines.
+**Status:** round 4. LightGBM for target (b), checked against a plain logistic regression and a
+post-switch-only fit, next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
 ## Data
@@ -22,6 +23,9 @@ has two feeds, official and volunteer. Times are UTC.
 - The snapshot is committed in `data/raw/`.
 - `data/raw/PULL_INFO.md` records the pull: 2026-10-10 08:27 UTC, upstream commit `7ccd436`.
 - We use the **official** feed. The volunteer feed is not reliable after mid-2025 (see below).
+- Hourly agreement between the volunteer and official feeds (Cohen's κ on "under alert") falls
+  from 0.985 in 2022Q3 to 0.448 in 2026Q3. The Lviv/Volyn parser bug described below accounts
+  for about 0.025 of that drop. The rest is unexplained.
 
 Known problems, handled in `src/load.py`:
 - The official feed ends 2026-09-07 ~05:40 UTC.
@@ -31,10 +35,16 @@ Known problems, handled in `src/load.py`:
 
 ### Evaluation window: the most recent trustworthy data
 The test period is the **last 30 full days of official data: 2026-08-07 00:00 → 2026-09-05 23:00
-UTC**. Rows whose lookback or target window touches the outage are dropped.
-- The model's longest feature window is 7 days, so every row after the outage is dropped too.
-- That leaves origins from 2026-08-07 00:00 to 2026-08-28 (22 days), for the model and the
-  baselines alike.
+UTC**. Usable test days: **24**, i.e. Aug 7–28 and Sep 4–5. The same rows are used for every
+predictor.
+- Rows whose [t−24h, t+H] touches the 2026-08-29 → 09-02 outage are dropped. That removes
+  Aug 29 – Sep 3.
+- Sep 3 is dropped because the same-hour-yesterday baseline would point into the outage. One
+  day was judged less important than scoring all predictors on identical rows.
+- On Sep 4–5, the 7-day features reach back into the outage. They are computed over the observed
+  part of their window: shares over observed time, counts scaled up to 7 days.
+- Every number is also reported for Aug 7–28 and Sep 4–5 separately
+  (`results/test_table_by_period.md`).
 
 Why it ends a month before the pull date:
 - The official feed stopped upstream on 2026-09-07.
@@ -105,6 +115,10 @@ Protocol:
 
 ## Model (`scripts/evaluate.py`, `src/features.py`)
 One LightGBM for all 24 units and target (b), one model per H, oblast as a categorical feature.
+Two comparison fits use the same split and threshold rule:
+- the same LightGBM trained only on rows from 2026-01-01;
+- a plain logistic regression (`src/logit.py`) on starts_7d, 24 hour-of-day dummies and oblast
+  dummies.
 
 Features, all known at t:
 - **Own state:** active at t; hours since the current alert started (0 if quiet); hours since
@@ -129,25 +143,38 @@ Fitting:
   than the one scored on test. The frequency baseline's threshold has the same approximation
   (it comes from a table fitted without the last week).
 
-Test month, target (b), model next to the baselines. Within-oblast AUC (higher is better) and
-Brier (lower is better):
+Test rows (24 days), target (b). Within-oblast AUC (higher is better) / Brier (lower is better):
 
-| H | base rate | LightGBM | same as now | same hour yesterday | train frequency |
-|---|---|---|---|---|---|
-| 1 | 0.120 | **0.696** / **0.087** | 0.443 / 0.281 | 0.516 / 0.178 | 0.500 / 0.100 |
-| 3 | 0.290 | **0.651** / **0.143** | 0.485 / 0.319 | 0.515 / 0.280 | 0.602 / 0.174 |
-| 6 | 0.421 | **0.644** / **0.141** | 0.491 / 0.358 | 0.508 / 0.273 | 0.629 / 0.176 |
+| H | base rate | LightGBM | LightGBM from 2026-01-01 | logistic: starts_7d + hour + oblast | same as now | same hour yesterday | train frequency |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.121 | **0.688** / 0.087 | 0.648 / 0.087 | 0.486 / 0.097 | 0.438 / 0.288 | 0.525 / 0.181 | 0.495 / 0.101 |
+| 3 | 0.296 | **0.645** / 0.145 | 0.642 / 0.142 | 0.483 / 0.154 | 0.480 / 0.327 | 0.524 / 0.281 | 0.581 / 0.177 |
+| 6 | 0.430 | **0.639** / 0.140 | 0.619 / 0.139 | 0.508 / 0.146 | 0.489 / 0.365 | 0.516 / 0.267 | 0.612 / 0.178 |
 
 How to read it:
-- At H=1 the model clearly ranks better: it beats the frequency baseline's AUC in 23 of 24
-  oblasts.
-- At H=6 its ranking edge *within* oblasts over the frequency baseline is small: it wins in
-  13 of 24 oblasts.
-- Its H=6 Brier gain over that baseline (0.034) splits about evenly between calibration
-  (reliability 0.001 vs 0.018) and resolution (0.102 vs 0.085).
-- The model's probabilities are well calibrated (`results/calibration.md`,
-  `figures/reliability_h6.png`).
-- Full table, including (a) and precision/recall: `results/test_table.md`. Plot for H=6:
+- **LightGBM earns its keep on ranking.** A logistic regression on starts_7d, hour of day and
+  oblast gets within 0.006–0.010 of LightGBM's Brier, but its within-oblast AUC is near 0.5
+  (0.48–0.51). LightGBM beats it in 24 / 23 / 22 of 24 oblasts.
+- So "how busy was this oblast this week" sets the level, which drives most of the Brier. The
+  ranking within an oblast comes from the other features.
+- **H=1:** LightGBM beats the frequency baseline's within-oblast AUC in 24 of 24 oblasts.
+- **H=6: not established.** On the 22-day window LightGBM beat the frequency baseline in 13 of 24
+  oblasts. Adding two days (Sep 4–5) moves that to 18 of 24 with the same model. A count that
+  moves by five on two extra days is not evidence either way.
+- **Training from 2026-01-01 instead of full history:** about the same Brier (slightly better),
+  lower mean within-oblast AUC at H=1 and H=6. Per oblast it wins 13 / 15 / 13 of 24. Neither
+  helps nor hurts clearly.
+- **Calibration:** LightGBM's probabilities are well calibrated overall (`results/calibration.md`,
+  `figures/reliability_h6.png`). Its lowest H=6 bin (predicted < 0.1) is entirely the eight
+  western oblasts. In the five furthest west the model predicts about 0.06–0.07 where 0.01–0.03
+  happened (`results/lowest_bin_h6.md`).
+- **Sep 4–5 alone:** every predictor has lower within-oblast AUC there, including the frequency
+  baseline, which uses no lookback features. At H=6, LightGBM's 0.447 is inside the range of
+  August's 2-day windows (0.42–0.65). At H=1, its 0.534 is below all of them (0.58–0.73), while
+  still above the frequency baseline. LightGBM under-predicts H=6 on those two days (0.50 vs
+  0.54 observed). Two days can't tell whether the 7-day scaling or the days themselves cause this.
+- Full tables, including (a) and precision/recall: `results/test_table.md`,
+  `results/test_table_by_period.md`, `results/oblast_wins.md`. Plot for H=6:
   `figures/model_vs_baselines_h6.png`. Feature importance: `results/feature_importance.md`.
 
 ## Run order
@@ -194,8 +221,9 @@ permanent alert) and Crimea are excluded, which leaves 24 units.
 The panel is for description and hand-checks. The evaluation computes targets exactly from
 episodes, and the two agree on the test rows (recipe below).
 
-Hand-check recipe: keep panel rows with `hour` in [2026-08-07, 2026-08-29), then average those
-columns. That is 12,672 rows and gives the H=1 base rates: (b) 0.120, (a) 0.303, active at t 0.205.
+Hand-check recipe: keep panel rows with `hour` in [2026-08-07, 2026-08-29) or
+[2026-09-04, 2026-09-06), then average those columns. That is 13,824 rows and gives the H=1 base
+rates: (b) 0.121, (a) 0.309, active at t 0.209.
 
 ## Layout
 
@@ -207,6 +235,7 @@ src/panel.py         alert rows -> raion alerts -> oblast episodes -> hourly pan
 src/targets.py       forecast rows, "active at t", targets (a) and (b)
 src/dataset.py       rows + targets on the full grid, chronological split masks
 src/features.py      model features (all known at t)
+src/logit.py         plain logistic regression (Newton / IRLS), the comparison model
 src/baselines.py     the three baselines
 src/metrics.py       Brier (+ decomposition), AUC, precision/recall/F1, max-F1 threshold
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features

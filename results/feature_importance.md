@@ -1,4 +1,4 @@
-Top 10 features by share of total gain, test-fit model per H.
+Top 10 features by share of total gain, full-history LightGBM test fit, per H.
 
 | rank | H=1 | H=3 | H=6 |
 |---|---|---|---|

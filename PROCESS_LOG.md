@@ -580,3 +580,167 @@ Brier ≈ reliability − resolution + uncertainty, 10 equal-width bins, target 
 - Weekly refits if the test month drifts. One check: the frequency baseline's under-prediction says the level
   drifts; the model's `starts_7d` already tracks it.
 - Sunday re-pull (the user does it): re-run `inspect_raw.py`, check for duplicates and outages, then re-run everything.
+
+---
+
+## 2026-10-10 — Round 4: getting Sep 4–5 back; logistic and post-switch comparisons
+
+### 0. Decisions taken
+- PR #1 merged. From now on: commit straight to `main`, no PRs, no reminders, no watching the repo.
+- CLAUDE.md was edited by the user on GitHub and re-read. It now says:
+  - neighbours = the last completed hour;
+  - static tables are fitted on train only, while rolling features may use anything already observed by t;
+  - 0/1 baselines are reported raw;
+  - the test window: if anything shrinks it, ask before running.
+- **My mistake in round 3.** I cut the test window from 30 to 22 days (7-day lookback × outage) and only logged it.
+  Under the new rule that needs asking first. Asked this round before building anything.
+- Agreed approach for the rows after the outage:
+  - compute the 7-day features over the observed part of their window, with counts scaled to the full window;
+  - "lookback complete" is kept only as a reporting label, not a feature. It is always 1 in training (the only
+    outage is in the test month), so a model could never learn from it.
+  - Sep 3 stays out, because same-hour-yesterday would point into the outage; identical rows for all predictors
+    matter more than one day.
+  - **Test = 24 days: Aug 7–28 + Sep 4–5.**
+- Sep 4–5 is reported both inside the pooled numbers and separately.
+- Also this round: a logistic regression on starts_7d + hour + oblast; LightGBM trained only from 2026-01-01; which
+  oblasts are in the lowest reliability bin (look, don't fix).
+- README: H=6 stays "not established"; κ stays "unexplained", no speculation.
+
+### 1. Lookback over the outage (`src/features.py`)
+- For each window [t−w, t] (6h, 24h, 7d), the part inside a known outage (`OFFICIAL_OUTAGES`) is removed:
+  - `share_*` = time under alert / observed time;
+  - `starts_*` = starts in the observed part × w / observed time.
+- Toy tests:
+  - one 2h alert per day with 5 days masked gives exactly the unmasked values (7 starts, share 2/24);
+  - extra alerts placed inside the masked days are ignored (7, not 10).
+- Where no window touches an outage, which is every training row, the values are bit-identical to before.
+- State features: on Sep 4–5 no row's `hours_since_end` or `hours_since_start` points into the outage (0 of 1,152).
+  `scripts/evaluate.py` now asserts this on every test row, so a future outage that breaks it fails loudly.
+- The split now requires [t−24h, t+H] clear of outages (`EVAL_LOOKBACK`), instead of 7 days.
+
+### 2. A bug I introduced this round and fixed before the results
+- Lowering the lookback to 24h also moved the "enough history" condition, so training started on 2022-03-17
+  instead of 03-23.
+- The first six days then got 7-day features over a window reaching before the data begins, i.e. undercounted.
+- Spotted because the feature importances shifted slightly when the model should not have changed.
+- **Fixed:** `FEATURE_HISTORY = 7d` in `src/dataset.py`, applied separately from the outage lookback.
+- After the fix, training rows are back to 920,448 (H=1) and the full-history LightGBM again uses 116 / 97 / 81
+  trees.
+- Its Aug 7–28 numbers equal round 3 to the third decimal (within-oblast AUC 0.696 / 0.651 / 0.644), so it is the
+  same model. The only change in its pooled numbers is the two added days.
+
+### 3. Sep 4–5 separately (`results/test_table_by_period.md`)
+LightGBM, target (b), within-oblast AUC / Brier:
+
+| H | Aug 7–28 | Sep 4–5 | all 24 days |
+|---|---|---|---|
+| 1 | 0.696 / 0.087 | 0.534 / 0.098 | 0.688 / 0.087 |
+| 3 | 0.651 / 0.143 | 0.476 / 0.158 | 0.645 / 0.145 |
+| 6 | 0.644 / 0.141 | 0.447 / 0.120 | 0.639 / 0.140 |
+
+**Sep 4–5 look off, and that is not hidden:**
+- Within-oblast AUC drops for *every* predictor on those two days, including the frequency baseline, which uses no
+  lookback features (H=6: 0.413). So it is not only the scaling.
+- **Comparison with August's 2-day windows**, same model, eleven blocks of two days each:
+  - H=6: LightGBM's 2-day AUC ranges 0.423–0.654. Sep 4–5's 0.447 is inside that range.
+  - H=1: the August blocks range 0.579–0.725. **Sep 4–5's 0.534 is below all of them.** The frequency baseline is
+    near its own minimum too (0.466 vs 0.468–0.687), and LightGBM keeps its usual margin over it.
+- Calibration on Sep 4–5:
+  - H=1: fine (0.141 predicted vs 0.141 observed).
+  - **H=6: under-predicts (0.495 vs 0.543)**, against 0.414 vs 0.421 in August.
+- Only 20 oblasts have both outcomes in those 48 hours, so within-oblast AUC there is very noisy.
+- Two days cannot separate "the 7-day scaling hurts" from "these two days were unusual". Logged as open.
+
+### 4. H=6 per-oblast comparison is unstable
+- LightGBM beats the frequency baseline's within-oblast AUC (target b, H=6) in:
+  - 13 of 24 oblasts on Aug 7–28 (as in round 3);
+  - **18 of 24 on all 24 days**, same model;
+  - 11 of 20 on Sep 4–5 alone.
+- Two extra days move the count by five. At H=6 it is not evidence either way: the README says "not established",
+  with both counts.
+- H=1: 23 of 24 on August alone, 24 of 24 pooled. Stable.
+
+### 5. Is LightGBM earning its keep? Logistic regression (`src/logit.py`)
+- Plain logistic regression fitted by Newton/IRLS in numpy (no scikit-learn). Inputs: starts_7d (linear),
+  24 hour-of-day dummies (Kyiv time) and oblast dummies.
+- A 1e-6 ridge term is there only for numerical safety.
+- Verified on simulated data: coefficients (−1, 0.8, 0.5) recovered as (−1.007, 0.799, 0.502).
+- Converges in 6–8 iterations. The starts_7d coefficient is 0.035 / 0.048 / 0.064 for H = 1/3/6.
+- Same split and threshold rule as LightGBM: a validation fit for the last-week threshold, then a test fit on all
+  of train.
+
+| H | LightGBM AUC within / Brier | logistic AUC within / Brier | LightGBM wins (oblasts) |
+|---|---|---|---|
+| 1 | 0.688 / 0.0875 | 0.486 / 0.0971 | 24 of 24 |
+| 3 | 0.645 / 0.1446 | 0.483 / 0.1535 | 23 of 24 |
+| 6 | 0.639 / 0.1398 | 0.508 / 0.1461 | 22 of 24 |
+
+- **Not within 0.01 AUC: LightGBM is 0.13–0.20 ahead.** The logistic model has essentially no ranking within an
+  oblast (≈0.5), but gets within 0.006–0.010 of LightGBM's Brier.
+- **Correction of my round-3 reading.** I wrote that the model is "mostly how busy this oblast has been this week",
+  based on `starts_7d` holding 48–72% of the gain.
+  - starts_7d (with oblast and hour) sets the *level*. That is what Brier mostly rewards, and the logistic model
+    gets it too.
+  - The *ranking within an oblast* comes from the other features: state, neighbours, interactions.
+  - Gain importance measures neither of these directly.
+
+### 6. Full history vs trained from 2026-01-01
+- Same features, same protocol; train rows from 2026-01-01 only (125,568 at H=1 instead of 920,448). Trees:
+  122 / 158 / 101.
+
+| H | full history AUC within / Brier | from 2026 AUC within / Brier | from-2026 wins (oblasts) |
+|---|---|---|---|
+| 1 | 0.688 / 0.0875 | 0.648 / 0.0865 | 13 of 24 |
+| 3 | 0.645 / 0.1446 | 0.642 / 0.1425 | 15 of 24 |
+| 6 | 0.639 / 0.1398 | 0.619 / 0.1389 | 13 of 24 |
+
+- The post-switch fit has slightly better Brier everywhere (it is a bit better calibrated to 2026 levels).
+- It has lower mean within-oblast AUC at H=1 and H=6.
+- Per oblast it is a coin flip.
+- Four years of history neither clearly help nor hurt. Kept full history as the main model.
+
+### 7. Lowest reliability bin (`results/lowest_bin_h6.md`); looked at, not fixed
+LightGBM, H=6, predictions below 0.1 on the 24 test days: 3,361 rows, **all from the eight western oblasts**.
+
+| oblast | rows in bin (of 566) | mean predicted | observed |
+|---|---|---|---|
+| Zakarpatska | 541 | 0.062 | 0.011 |
+| Ivano-Frankivska | 539 | 0.063 | 0.011 |
+| Lvivska | 533 | 0.064 | 0.011 |
+| Volynska | 480 | 0.064 | 0.025 |
+| Chernivetska | 424 | 0.073 | 0.028 |
+| Ternopilska | 402 | 0.074 | 0.052 |
+| Rivnenska | 223 | 0.082 | 0.063 |
+| Khmelnytska | 219 | 0.082 | 0.096 |
+
+- Your guess was right.
+- The five furthest west get ~0.06–0.07 where 0.01–0.03 happened: the model does not go as low as their test-month
+  rate (one new alert in 24 days for Lviv, Ivano-Frankivsk and Zakarpattia).
+- Rivne and Khmelnytskyi are roughly right; Khmelnytskyi is slightly under-predicted.
+
+### 8. No-peeking check
+- Same 40 origins; 2 of them are on Sep 4–5, so the masked path is exercised.
+- 0 mismatches in 6,720 baseline-input values and 0 in 37,440 feature values.
+- Both negative controls fire (421 of 421; 161 of 960).
+- Training windows close by 2026-08-07, validation-fit windows by 2026-07-31.
+
+### 9. Other changes
+- `scripts/evaluate.py` rewritten for the extra predictors and the period split. New outputs:
+  - `results/test_table_by_period.md`
+  - `results/oblast_wins.md`
+  - `results/lowest_bin_h6.md`
+- `results/test_table.md` is the pooled 24-day table.
+- `scripts/check_no_peeking.py` uses the 24h evaluation lookback for its structural check.
+- README:
+  - test window = 24 days, with the reason;
+  - κ drop stated as unexplained;
+  - results table with the logistic and post-switch columns;
+  - H=6 "not established" with both counts;
+  - the Sep 4–5 caveat;
+  - the lowest bin;
+  - hand-check recipe updated (13,824 rows; 0.121 / 0.309 / 0.209).
+
+### 10. Next (not done)
+- Sep 4–5: two days are not enough to tell whether the scaled 7-day features hurt. If the Sunday re-pull brings
+  September data, those rows will have complete lookbacks and the question answers itself.
+- Weekly refits if the model drifts over the test window.
