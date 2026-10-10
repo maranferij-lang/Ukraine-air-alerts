@@ -1,0 +1,7 @@
+# rebuilt by scripts/build_panel.py
+data/processed/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
