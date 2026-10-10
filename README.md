@@ -264,13 +264,25 @@ Feature importance (`results/news/feature_importance.md`):
   gain each.
 - They take 10–17% of the splits.
 
+**Why it most likely hurts: the trees use news as a calendar.**
+- The weekly news level drifts over the months (`figures/gdelt_weekly.png`). A national number that
+  drifts lets a tree tell one stretch of training weeks from another, much like a date column would.
+  That fits the training months, not the next H hours.
+- Two facts point this way.
+  - The trees split on the news columns often (10–17% of splits) but gain little from those splits
+    (2–4% each).
+  - Early stopping on the last training week stops sooner with news: 80 / 64 / 60 trees instead of
+    122 / 158 / 101 for H=1/3/6 (`results/news/news_vs_no_news.md`). The validation loss turns up
+    sooner.
+- This is a reading of those two facts. We did not test it, e.g. with a detrended count.
+
 **Verdict: news does not help.**
 - Within-oblast AUC is lower with news at H=1 and H=3 and about the same at H=6. All three
   intervals include zero.
 - Brier is slightly worse, and the interval is above zero at H=3 and H=6.
 - On Sep 4–5 the news model has the higher AUC at every H. That is 48 origins per oblast, so it
   shows nothing either way.
-- The branch stays as a record; main is not changed.
+- Not merged. The branch stays as a record, and main's README points here.
 
 ## Limitations and what we would do next
 Limitations:

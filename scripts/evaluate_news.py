@@ -9,7 +9,8 @@ and the three baselines. Checks that every row it shares with main reproduces re
 Target (b) is modelled; target (a) is reported as "1 if active at t, else model(b)", as on main.
 
 Also: a day-block bootstrap (resampling the 24 test days, 1000 times) of the difference "with news
-minus without" in within-oblast AUC and Brier, and the feature importance of the news model.
+minus without" in within-oblast AUC and Brier, the number of trees each fit stopped at, and the
+feature importance of the news model.
 Writes results/news/*.md|csv.
 """
 import sys
@@ -74,7 +75,7 @@ def main():
     lookback_complete = ~touches(rows, OFFICIAL_OUTAGES, before=pd.Timedelta(days=7), after=pd.Timedelta(0))
     day = rows["t"].dt.floor("D")
 
-    results, importance, splits, wins, boot = [], {}, {}, [], []
+    results, importance, splits, wins, boot, tree_counts = [], {}, {}, [], [], []
     for H in HORIZONS:
         m = split(rows, first, end, test_start, H, EVAL_LOOKBACK)
         test = m["test"]
@@ -90,6 +91,7 @@ def main():
         fitted["lgbm"], trees["lgbm"], _ = fit_predict(feats[H], yb, m)
         fitted["lgbm_2026"], trees["lgbm_2026"], _ = fit_predict(feats[H], yb, m26)
         fitted["lgbm_2026_news"], trees["lgbm_2026_news"], final = fit_predict(Xn, yb, m26)
+        tree_counts.append({"H": H, **{PREDICTORS[k]: v for k, v in trees.items()}})
         nan_train = int(Xn.loc[m26["train"], NEWS_FEATURES].isna().any(axis=1).sum())
         print(f"H={H}: trees {trees}; train rows from 2026 {m26['train'].sum()} ({nan_train} without a full news "
               f"window, NaN), last week {m['last_week'].sum()}, test {test.sum()} = Aug {periods['aug'].sum()} "
@@ -179,7 +181,9 @@ def main():
         f"Day-block bootstrap on all 24 test days ({N_BOOT} resamples of whole days, seed 0): difference with news "
         "minus without, within-oblast AUC (higher is better) and Brier (lower is better), point value and 95% "
         "percentile interval; share_auc_diff_gt_0 = share of resamples where news has the higher AUC.\n\n"
-        + md_table(boot, "{:.4f}") + "\n")
+        + md_table(boot, "{:.4f}") + "\n\n"
+        "Number of trees chosen by early stopping on the last train week (validation fit, 100 rounds patience); "
+        "the test fit uses the same number:\n\n" + md_table(pd.DataFrame(tree_counts)) + "\n")
 
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_rows", 200):
         print(main_tab.drop(columns=["n_oblasts_auc", "target"]).assign(t=res.loc[main_tab.index, "target"])

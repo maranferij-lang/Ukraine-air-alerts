@@ -19,3 +19,11 @@ Day-block bootstrap on all 24 test days (1000 resamples of whole days, seed 0): 
 | 1 | 24 | -0.0272 | -0.0559 | 0.0238 | 0.0002 | -0.0001 | 0.0005 | 0.3300 |
 | 3 | 24 | -0.0638 | -0.1067 | 0.0267 | 0.0014 | 0.0005 | 0.0024 | 0.2530 |
 | 6 | 24 | -0.0023 | -0.0258 | 0.0267 | 0.0011 | 0.0002 | 0.0019 | 0.5670 |
+
+Number of trees chosen by early stopping on the last train week (validation fit, 100 rounds patience); the test fit uses the same number:
+
+| H | LightGBM full history (main, no news) | LightGBM from 2026-01-01 | LightGBM from 2026-01-01 + news |
+|---|---|---|---|
+| 1 | 116 | 122 | 80 |
+| 3 | 97 | 158 | 64 |
+| 6 | 81 | 101 | 60 |

@@ -965,3 +965,20 @@ Figures are with news minus without, point value and 95% interval.
   > within-oblast AUC or Brier at any H; the numbers, next to the three baselines, are on branch `news`.
 - The proposal has no numbers on purpose. A model number on main without its baselines would break the README
   rule, and the full table belongs on the branch.
+
+### Follow-up (user): the "calendar" reading goes in the README; pointer on main
+- The user asked to put the calendar explanation in the README news section ("the most useful sentence in the
+  whole experiment"). It is there now, with its two facts and a note that it is a reading, not tested:
+  - many splits for little gain;
+  - early stopping comes sooner.
+- The tree counts were only printed to stdout. `scripts/evaluate_news.py` now also writes them to
+  `results/news/news_vs_no_news.md`, so the README number can be copied from `results/`:
+  - with news: 80 / 64 / 60;
+  - 2026 without news: 122 / 158 / 101;
+  - full history: 116 / 97 / 81.
+- Re-ran it: apart from the new trees table, `results/news/` is unchanged.
+- The weekly GDELT levels behind "the level drifts" are not in `results/`, so the README points at
+  `figures/gdelt_weekly.png` instead of quoting them.
+- The user approved the two-sentence pointer on main, with a GitHub link to this branch, together with the
+  ground-rules wording fix there. That is one commit on main, after which main is frozen. Main is then merged
+  into this branch so `news` stays "main + the experiment".
