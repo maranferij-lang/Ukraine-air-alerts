@@ -1,6 +1,7 @@
 """Q3: build the hourly panel, one row per oblast per UTC hour.
 
-    python scripts/build_panel.py                  # official, oblast = at least half its raions
+    python scripts/build_panel.py                  # official, oblast = at least half its raions,
+                                                   # restarts within 5 min joined
     python scripts/build_panel.py --min-share 0    # official, oblast = any raion
     python scripts/build_panel.py --source volunteer
 
@@ -17,15 +18,19 @@ sys.path.insert(0, str(ROOT))
 import pandas as pd
 
 from src.load import OFFICIAL_OUTAGES, PERMANENT_ALERT_OBLASTS, data_end, load_official, load_volunteer
-from src.panel import expand_to_raions, hourly_panel, merge_episodes, oblast_episodes
+from src.panel import RESTART_GAP, hourly_panel, merge_episodes, official_episodes
 
 
 def build(source="official", min_share=0.5):
     if source == "official":
         alerts = load_official()
         alerts = alerts[~alerts["oblast"].isin(PERMANENT_ALERT_OBLASTS)]
-        episodes = oblast_episodes(expand_to_raions(alerts), min_share)
+        episodes, raw = official_episodes(alerts, min_share)
         outages = OFFICIAL_OUTAGES
+        joined = len(raw) - len(episodes)
+        per_year = (raw["start"].dt.year.value_counts() - episodes["start"].dt.year.value_counts()).sort_index()
+        print(f"restarts within {RESTART_GAP} of the previous end joined: {joined} of {len(raw)} episodes "
+              f"({joined / len(raw):.1%}); by year {per_year.to_dict()}")
     else:
         alerts = load_volunteer()
         alerts = alerts[~alerts["oblast"].isin(PERMANENT_ALERT_OBLASTS)]

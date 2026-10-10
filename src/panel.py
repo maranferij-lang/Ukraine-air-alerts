@@ -6,34 +6,63 @@ Steps:
   2. oblast_episodes: oblast "under alert" while at least min_share of its raions are.
   3. hourly_panel: lay episodes onto an hourly grid. Hour h is the bucket [h, h+1h).
 merge_episodes is the generic "union of overlapping intervals per unit" used throughout.
+official_episodes chains steps 1-2 and joins restarts within RESTART_GAP (re-issued messages).
 """
 import numpy as np
 import pandas as pd
 
 HOUR = pd.Timedelta(hours=1)
+# a new oblast episode starting within this long after the previous one ended is the same
+# alert re-issued, not a new alert (decision 2026-10-10, round 2)
+RESTART_GAP = pd.Timedelta(minutes=5)
 
 
-def expand_to_raions(official):
+def official_episodes(official, min_share=0.5, restart_gap=RESTART_GAP, raions=None):
+    """Oblast episodes from cleaned official rows (permanent-alert oblasts already removed).
+
+    Returns (episodes, raw_episodes): raw_episodes are before joining restarts. Use raw ones
+    for "what is the state at t" (at t nobody knows yet whether a restart will follow) and
+    the joined ones for targets.
+    """
+    if raions is None:
+        raions = raion_list(official)
+    n_raions = raions.groupby("oblast")["raion"].size()
+    raw = oblast_episodes(expand_to_raions(official, raions), min_share, n_raions)
+    return merge_episodes(raw, max_gap=restart_gap), raw
+
+
+def raion_list(official):
+    """Raions of each oblast: every raion name seen in a raion-level row. These are the 2020
+    administrative raions, i.e. a fixed list known in advance, not something learnt from data."""
+    raion_rows = official[official["level"] == "raion"]
+    return raion_rows.groupby("oblast")["raion"].unique().explode().reset_index()
+
+
+def expand_to_raions(official, raions=None):
     """Official alerts as one row per raion.
 
-    The raion list of each oblast is every raion name that appears in a raion-level row.
+    raions: DataFrame oblast, raion (default: raion_list(official)).
     Kyiv City never has raion-level rows, so it is its own single "raion".
     """
     raion_rows = official[official["level"] == "raion"]
-    raions = raion_rows.groupby("oblast")["raion"].unique().explode().reset_index()
+    if raions is None:
+        raions = raion_list(official)
     oblast_rows = official[official["level"] == "oblast"].drop(columns="raion")
     oblast_rows = oblast_rows.merge(raions, on="oblast", how="left")
     oblast_rows["raion"] = oblast_rows["raion"].fillna(oblast_rows["oblast"])
     return pd.concat([raion_rows, oblast_rows])[["oblast", "raion", "start", "end"]]
 
 
-def oblast_episodes(raion_alerts, min_share=0.5):
+def oblast_episodes(raion_alerts, min_share=0.5, n_raions=None):
     """Intervals during which at least min_share of an oblast's raions are under alert.
 
     min_share=0 means "any raion"; 0.5 means "at least half"; 1 means "all raions".
+    n_raions: Series oblast -> number of raions (default: raions seen in raion_alerts;
+    oblasts missing from it, i.e. Kyiv City, count as 1).
     Works by sweeping over raion episode starts (+1) and ends (-1) in time order.
     """
-    n_raions = raion_alerts.groupby("oblast")["raion"].nunique()
+    if n_raions is None:
+        n_raions = raion_alerts.groupby("oblast")["raion"].nunique()
     per_raion = merge_episodes(raion_alerts.assign(oblast=raion_alerts["oblast"] + "|" + raion_alerts["raion"]))
     per_raion["oblast"] = per_raion["oblast"].str.split("|").str[0]
     per_raion = per_raion[per_raion["end"] > per_raion["start"]]
@@ -44,7 +73,7 @@ def oblast_episodes(raion_alerts, min_share=0.5):
     ])
     events = events.sort_values(["oblast", "t", "step"]).reset_index(drop=True)  # ends first at ties
     n_active = events.groupby("oblast")["step"].cumsum()
-    needed = np.maximum(1, np.ceil(min_share * events["oblast"].map(n_raions) - 1e-9))
+    needed = np.maximum(1, np.ceil(min_share * events["oblast"].map(n_raions).fillna(1) - 1e-9))
     on = n_active >= needed
     was_on = on.groupby(events["oblast"]).shift(fill_value=False)
 

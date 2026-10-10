@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 import pandas as pd
 
 from src.load import PERMANENT_ALERT_OBLASTS, load_official, load_volunteer
-from src.panel import expand_to_raions, oblast_episodes
+from src.panel import official_episodes
 
 PROCESSED = ROOT / "data" / "processed"
 pd.set_option("display.width", 200)
@@ -35,9 +35,9 @@ sep = off[(off["oblast"] == "Kyivska oblast") & (off["start"] >= utc("2026-09-01
 print(f"official rows (cleaned), September 2026 UTC: {len(sep)}  by level: {sep['level'].value_counts().to_dict()}"
       f"  distinct start timestamps: {sep['start'].nunique()}  covering {sep['start'].min()} .. {sep['start'].max()}")
 keep = ~off["oblast"].isin(PERMANENT_ALERT_OBLASTS)
-ep = oblast_episodes(expand_to_raions(off[keep]), 0.5)
+ep, _ = official_episodes(off[keep])
 ep_sep = ep[(ep["oblast"] == "Kyivska oblast") & (ep["start"] >= utc("2026-09-01")) & (ep["start"] < utc("2026-10-01"))]
-print(f"official oblast episodes (>= half of raions) starting in Sep 2026 UTC: {len(ep_sep)}")
+print(f"official oblast episodes (>= half of raions, restarts <= 5 min joined) starting in Sep 2026 UTC: {len(ep_sep)}")
 print("NB official data stops 2026-09-07 05:40 UTC and has nothing 2026-08-29..09-02 13:48 UTC.")
 
 print("\n=== 2. Longest single alert (one raw row, cleaned official / volunteer)")

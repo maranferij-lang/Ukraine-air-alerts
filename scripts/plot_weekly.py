@@ -20,7 +20,7 @@ import pandas as pd
 
 from src.load import (OFFICIAL_OUTAGES, PERMANENT_ALERT_OBLASTS, data_end, load_official,
                       load_volunteer)
-from src.panel import expand_to_raions, merge_episodes, oblast_episodes
+from src.panel import merge_episodes, official_episodes
 
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 LEVEL_COLORS = {"oblast": "#2a78d6", "raion": "#eb6834", "hromada": "#1baf7a"}
@@ -46,15 +46,14 @@ def main():
     vol_first = vol["start"].min().ceil("D")
 
     keep = ~off["oblast"].isin(PERMANENT_ALERT_OBLASTS)
-    ra = expand_to_raions(off[keep])
     vol_keep = vol[~vol["oblast"].isin(PERMANENT_ALERT_OBLASTS)]
 
     table = pd.DataFrame({
         "official_rows_raw_file": weekly(raw["start"], off_first, off_end),
         **{f"official_rows_{lvl}": weekly(off.loc[off["level"] == lvl, "start"], off_first, off_end)
            for lvl in LEVEL_COLORS},
-        "official_starts_half_raions": weekly(oblast_episodes(ra, 0.5)["start"], off_first, off_end),
-        "official_starts_any_raion": weekly(oblast_episodes(ra, 0.0)["start"], off_first, off_end),
+        "official_starts_half_raions": weekly(official_episodes(off[keep], 0.5)[0]["start"], off_first, off_end),
+        "official_starts_any_raion": weekly(official_episodes(off[keep], 0.0)[0]["start"], off_first, off_end),
         "volunteer_rows": weekly(vol["start"], vol_first, vol_end),
         "volunteer_starts": weekly(merge_episodes(vol_keep)["start"], vol_first, vol_end),
     })
