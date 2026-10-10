@@ -11,6 +11,22 @@ One model covers all oblasts, with oblast as a feature.
 - **Same, Sep 4–5 alone (7-day features scaled from observed hours):** H=1 0.534 / 0.098 vs 0.466 / 0.119 · H=3 0.476 / 0.158 vs 0.424 / 0.218 · H=6 0.447 / 0.120 vs 0.409 / 0.203.
 - **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
 
+**Quick start**
+```bash
+git clone https://github.com/maranferij-lang/Ukraine-air-alerts
+cd Ukraine-air-alerts
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt       # ~30 s
+python scripts/plot_weekly.py         # ~10 s    -> figures/alerts_per_week.png (+ .csv)
+python scripts/evaluate.py            # ~1.5 min -> results/, figures/model_vs_baselines_h6.png, figures/reliability_h6.png
+python scripts/check_no_peeking.py    # ~25 s    optional: leakage check, prints only
+```
+- **Tested** from a fresh clone and a fresh venv on Python 3.11, 3.12 and 3.13 (Linux, 4 cores):
+  - packages: pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0;
+  - on all three, every file in `results/` and `figures/` came out byte-identical to the committed ones.
+- **No download needed:** the data snapshot (`data/raw/`, upstream commit `7ccd436`) is in the repo.
+  The full step-by-step order is in "Run order" below.
+
 Ground rules (fixed):
 - No leakage. Every feature for origin t uses only what is known at t. Neighbours use the last
   completed hour [t−1h, t). Static tables (the frequency baseline) are fitted on train only;
