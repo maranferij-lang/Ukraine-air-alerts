@@ -1015,3 +1015,47 @@ This is the one commit on `main` the user approved after round 5. After it, `mai
   - static tables (the frequency baseline) are fitted on train only;
   - rolling features may use anything already observed by t.
 - No code or result changed on `main`. The round-5 outputs stand as committed.
+
+---
+
+## 2026-10-10 — Round 7 (main): quick start in the README
+
+The user asked for this one commit on `main`: README only, no code changes.
+
+### What the block says
+- It sits right after "Results in brief": clone, venv, `pip install -r requirements.txt`, then the commands that
+  rewrite every tracked file in `results/` and `figures/`, with timings.
+- **Only two commands are needed:**
+  - `plot_weekly.py` writes `figures/alerts_per_week.png/.csv`. It reads `data/raw` directly.
+  - `evaluate.py` writes the 9 files in `results/` plus `figures/model_vs_baselines_h6.png` and
+    `figures/reliability_h6.png`. It builds its rows from `data/raw` and does not need the panels.
+  - `build_panel.py`, `inspect_raw.py` and `hand_checks.py` write nothing tracked. They stay in "Run order",
+    which is unchanged.
+- `check_no_peeking.py` is listed as optional. It prints the leakage check and writes nothing.
+- One line says the data snapshot is in the repo, so nothing needs to be downloaded.
+
+### How it was tested
+- Each Python version (3.11.17, 3.12.3, 3.13.16) got a fresh `git clone` of `main` from GitHub (4cf73fb) in a new
+  scratch folder, not the working tree, plus a new venv and `pip install -r requirements.txt`.
+- The installed packages were pandas 3.0.6, matplotlib 3.11.2 and lightgbm 4.7.0 everywhere. numpy was 2.5.4 on
+  3.12/3.13 and 2.4.6 on 3.11.
+- Then the three commands ran in order, on a 4-core container:
+
+  | step | 3.13 | 3.12 | 3.11 |
+  |---|---|---|---|
+  | pip install | 32 s | 29 s | 31 s |
+  | `plot_weekly.py` | 12 s | 10 s | 11 s |
+  | `evaluate.py` | 84 s | 84 s | 84 s |
+  | `check_no_peeking.py` | 22 s | 24 s | 23 s |
+
+- **Result:**
+  - Every run exited 0, and every leakage-check assert passed.
+  - On all three versions, all 13 tracked files in `results/` and `figures/` were rewritten after the clone.
+  - `git status` was empty afterwards, so they are byte-identical to the committed ones.
+- The README rounds the timings to ~30 s / ~10 s / ~1.5 min / ~25 s.
+
+### Housekeeping
+- `data/news/gdelt_conflict_adm1_hourly.csv` showed up as untracked while `main` was checked out. It is the
+  per-region GDELT file from the experiment: git-ignored on `news`, but not on `main`.
+- I moved it out of the working tree rather than touch `.gitignore` on `main`, because this round is README only.
+  `scripts/fetch_gdelt_events.py` on `news` regenerates it.
