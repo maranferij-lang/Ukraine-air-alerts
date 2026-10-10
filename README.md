@@ -4,6 +4,13 @@
 oblast X in the next H hours, for H = 1, 3, 6? The answer is yes/no plus a probability.
 One model covers all oblasts, with oblast as a feature.
 
+**Results in brief**
+- **Data:** official alerts from Vadimkin/ukrainian-air-raid-sirens-dataset, upstream commit `7ccd436`, pulled 2026-10-10 (re-pulled 18:58 UTC, unchanged). The official feed ends 2026-09-07.
+- **Test window:** the last 30 days of official data (2026-08-07 → 09-05), minus the Aug 29 – Sep 2 feed outage and Sep 3 (24h lookback). That leaves 24 days: the most recent official data we trust.
+- **New alert within H hours (b), within-oblast AUC / Brier, LightGBM vs train-frequency baseline, all 24 days:** H=1 0.688 / 0.087 vs 0.495 / 0.101 · H=3 0.645 / 0.145 vs 0.581 / 0.177 · H=6 0.639 / 0.140 vs 0.612 / 0.178 (frequency is the best of the three baselines on Brier at every H; all three are in the tables below).
+- **Same, Sep 4–5 alone (7-day features scaled from observed hours):** H=1 0.534 / 0.098 vs 0.466 / 0.119 · H=3 0.476 / 0.158 vs 0.424 / 0.218 · H=6 0.447 / 0.120 vs 0.409 / 0.203.
+- **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
+
 Ground rules (fixed):
 - No leakage. Every aggregate is computed on the training period only. Splits are
   chronological, never random.
@@ -12,8 +19,8 @@ Ground rules (fixed):
   plain accuracy.
 - Working rules for this repo are in `CLAUDE.md`.
 
-**Status:** round 4. LightGBM for target (b), checked against a plain logistic regression and a
-post-switch-only fit, next to the three baselines.
+**Status:** final pass (round 5). LightGBM for target (b), checked against a plain logistic
+regression and a post-switch-only fit, next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
 ## Data
@@ -21,7 +28,8 @@ post-switch-only fit, next to the three baselines.
 [Vadimkin/ukrainian-air-raid-sirens-dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset)
 has two feeds, official and volunteer. Times are UTC.
 - The snapshot is committed in `data/raw/`.
-- `data/raw/PULL_INFO.md` records the pull: 2026-10-10 08:27 UTC, upstream commit `7ccd436`.
+- `data/raw/PULL_INFO.md` records the pull: 2026-10-10 18:58 UTC, upstream commit `7ccd436`. That is
+  the same commit as the first pull at 08:27 UTC, and both files are byte-identical to it.
 - We use the **official** feed. The volunteer feed is not reliable after mid-2025 (see below).
 - Hourly agreement between the volunteer and official feeds (Cohen's κ on "under alert") falls
   from 0.985 in 2022Q3 to 0.448 in 2026Q3. The Lviv/Volyn parser bug described below accounts
@@ -51,9 +59,10 @@ Why it ends a month before the pull date:
 - The only feed covering September (volunteer) mislabels oblasts after mid-2025 (next section).
 - So the most recent data we can trust ends 2026-09-05.
 
-We re-pull on Sunday with `scripts/fetch_data.py`.
-- The window is anchored to the end of the official data. If upstream has fixed the feed, the
-  test month moves forward on its own.
+Re-pulled with `scripts/fetch_data.py` on 2026-10-10 18:58 UTC. Upstream was unchanged: same commit, same
+files, official data still ending 2026-09-07. So the window stayed.
+- The window is anchored to the end of the official data. If upstream fixes the feed, the test
+  month moves forward on its own.
 - A backfill is exactly when duplicates and outages tend to appear. So after re-pulling, re-run
   `scripts/inspect_raw.py` and re-check the outage list before trusting the new window.
 
@@ -151,6 +160,15 @@ Test rows (24 days), target (b). Within-oblast AUC (higher is better) / Brier (l
 | 3 | 0.296 | **0.645** / 0.145 | 0.642 / 0.142 | 0.483 / 0.154 | 0.480 / 0.327 | 0.524 / 0.281 | 0.581 / 0.177 |
 | 6 | 0.430 | **0.639** / 0.140 | 0.619 / 0.139 | 0.508 / 0.146 | 0.489 / 0.365 | 0.516 / 0.267 | 0.612 / 0.178 |
 
+Sep 4–5 alone (43–48 origins per oblast depending on H; 7-day features scaled from the observed hours; within-oblast AUC over the
+20 oblasts with both outcomes), same columns:
+
+| H | base rate | LightGBM | LightGBM from 2026-01-01 | logistic: starts_7d + hour + oblast | same as now | same hour yesterday | train frequency |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.141 | 0.534 / 0.098 | 0.555 / 0.096 | 0.419 / 0.114 | 0.359 / 0.365 | 0.538 / 0.218 | 0.466 / 0.119 |
+| 3 | 0.365 | 0.476 / 0.158 | 0.471 / 0.159 | 0.361 / 0.170 | 0.395 / 0.425 | 0.519 / 0.297 | 0.424 / 0.218 |
+| 6 | 0.543 | 0.447 / 0.120 | 0.440 / 0.122 | 0.325 / 0.121 | 0.392 / 0.444 | 0.501 / 0.196 | 0.409 / 0.203 |
+
 How to read it:
 - **LightGBM earns its keep on ranking.** A logistic regression on starts_7d, hour of day and
   oblast gets within 0.006–0.010 of LightGBM's Brier, but its within-oblast AUC is near 0.5
@@ -158,9 +176,9 @@ How to read it:
 - So "how busy was this oblast this week" sets the level, which drives most of the Brier. The
   ranking within an oblast comes from the other features.
 - **H=1:** LightGBM beats the frequency baseline's within-oblast AUC in 24 of 24 oblasts.
-- **H=6: not established.** On the 22-day window LightGBM beat the frequency baseline in 13 of 24
-  oblasts. Adding two days (Sep 4–5) moves that to 18 of 24 with the same model. A count that
-  moves by five on two extra days is not evidence either way.
+- **H=6: not established.** LightGBM beats the frequency baseline in 13 of 24
+  oblasts on Aug 7–28, and in 18 of 24 on all 24 days, with the same model
+  (`results/oblast_wins.md`). A count that moves by five on two extra days is not evidence either way.
 - **Training from 2026-01-01 instead of full history:** about the same Brier (slightly better),
   lower mean within-oblast AUC at H=1 and H=6. Per oblast it wins 13 / 15 / 13 of 24. Neither
   helps nor hurts clearly.
@@ -176,6 +194,40 @@ How to read it:
 - Full tables, including (a) and precision/recall: `results/test_table.md`,
   `results/test_table_by_period.md`, `results/oblast_wins.md`. Plot for H=6:
   `figures/model_vs_baselines_h6.png`. Feature importance: `results/feature_importance.md`.
+
+## News and text data
+We did not use the alert messages themselves, or any news or Telegram text.
+- Every alert in this data is a message. The message announcing an alert, or the launch behind
+  it, *is* the target. Using its text would hand the model the answer.
+- A text feature would have to come from sources other than the alert channels, timestamped
+  strictly before t.
+
+No text experiment has been run. This section is where one would go.
+
+## Limitations and what we would do next
+Limitations:
+- **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
+  of that is the Lviv/Volyn parser bug; the rest is unexplained.
+- **Western oblasts:** Lviv, Ivano-Frankivsk and Zakarpattia had one new alert each in the 24 test
+  days. Their within-oblast AUCs are close to noise. In the five furthest west, the model
+  predicts about 0.06–0.07 at H=6 where 0.01–0.03 happened.
+- **Sep 4–5:** two days with 7-day features scaled from the observed hours. Every predictor scores
+  lower there, and two days can't say why.
+- **Thresholds** come from a validation fit on train minus the last week, not from the model
+  scored on test. The frequency baseline's threshold has the same approximation.
+- **The official feed stopped on 2026-09-07,** so the test window ends a month before the pull. It
+  can't move until upstream recovers.
+- **The raion switch (Jul–Dec 2025)** changed what an alert means. The half-of-raions rule keeps
+  base rates roughly continuous for most oblasts but not all (Kherson), and training mixes both
+  regimes. Training only on 2026 neither clearly helped nor hurt.
+
+Next:
+- Weekly refits through the test window, to see whether level drift costs the model what it
+  costs the static frequency table.
+- A hazard-style model: the probability of a new alert as a function of time since the last one
+  ended, per oblast, instead of fixed H windows.
+- Raion-level targets, so frontline raions and quieter ones are forecast separately rather than
+  through the half-of-raions rule.
 
 ## Run order
 

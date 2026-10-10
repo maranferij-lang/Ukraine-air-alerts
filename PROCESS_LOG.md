@@ -744,3 +744,61 @@ LightGBM, H=6, predictions below 0.1 on the 24 test days: 3,361 rows, **all from
 - Sep 4–5: two days are not enough to tell whether the scaled 7-day features hurt. If the Sunday re-pull brings
   September data, those rows will have complete lookbacks and the question answers itself.
 - Weekly refits if the model drifts over the test window.
+
+---
+
+## 2026-10-10 — Round 5: final pass (re-pull, reproduction, README)
+
+### 0. CLAUDE.md
+Pulled `6cca252`. Two new lines:
+- never compare western oblasts with volunteer numbers (Lviv/Volyn parser bug);
+- rows after the outage use scaled 7-day features and must always be reported separately next to the pooled numbers.
+
+Both were already true of the round-4 outputs. The README now also has a Sep 4–5 table next to the pooled one (§3).
+
+### 1. Re-pull
+- `scripts/fetch_data.py` at **2026-10-10 18:58:48 UTC**. Upstream HEAD is still `7ccd436`, the same commit as the
+  08:27 pull (upstream's last commit was 05:01 UTC that morning).
+- sha256 of both CSVs is identical to `PULL_INFO.md` before the re-pull. Only the pull time in `PULL_INFO.md` changed.
+- `scripts/inspect_raw.py`, all unchanged:
+  - official ends 2026-09-07 05:28:22 (start) / 05:39:33 (end);
+  - 113,845 exact duplicate rows; 185,364 rows after cleaning.
+- Outage scan (6h windows with no official message while the volunteer feed has ≥5 starts): the same 18 windows as
+  round 1. 17 are the known Aug 29 – Sep 2 outage; the 18th is 2023-03-18 18:00, judged a quiet evening in round 1.
+  **No new outage.**
+- **The official data did not change, so the test window stays.**
+
+### 2. Reproduction
+- Snapshot of `results/` and `figures/` taken before the re-pull (both equal to the round-4 commit).
+- Full pipeline from an empty `data/processed/`, in the documented order (8 scripts).
+- **`results/` and `figures/` are byte-identical to round 4** (`diff -rq`).
+- `check_no_peeking.py`: 0 / 0 mismatches; both negative controls fire.
+
+### 3. One code change, then README
+- The README's H=6 "13 of 24 oblasts" (Aug 7–28) came from an ad-hoc check in round 4 and was not in `results/`.
+- **Changed:** `scripts/evaluate.py` writes the oblast win counts per period (all / Aug 7–28 / Sep 4–5) into
+  `results/oblast_wins.md`. Re-ran it: only `results/oblast_wins.md` differs from round 4; every other result and
+  figure is still byte-identical.
+- At H=6, LightGBM vs frequency: 13 of 24 (Aug), 18 of 24 (all), 11 of 20 (Sep 4–5).
+- README additions:
+  - "Results in brief" right after the question: 6 lines, numbers extracted by script from `results/test_table.md`,
+    `results/test_table_by_period.md` and `results/oblast_wins.md`;
+  - a Sep 4–5 table under the pooled table, generated from `results/test_table_by_period.md`;
+  - "News and text data";
+  - "Limitations and what we would do next";
+  - the re-pull recorded; the status line.
+- Cross-check: the pooled README table (18 cells) matches `results/test_table.md`, 0 mismatches.
+- **Rounding:** `results/test_table.csv` keeps 4 decimals, and rounding those again to 3 can be off by 0.001 from the
+  markdown tables. Example: frequency within-oblast AUC at H=6 is 0.612 in the markdown, 0.613 from the CSV. README
+  numbers are copied from the markdown tables, which round once from full precision.
+- Caught in my own draft before commit:
+  - "frequency is the strongest baseline" is wrong at H=1, where same-hour-yesterday has the higher within-oblast AUC
+    (0.525 vs 0.495). Changed to "best of the three on Brier at every H" (0.101 / 0.177 / 0.178 vs yesterday
+    0.181 / 0.281 / 0.267 and persistence 0.288 / 0.327 / 0.365).
+  - "48 origins per oblast" on Sep 4–5 holds only at H=1. Changed to 43–48.
+- **Tension flagged:** the instruction for the brief block asked for the frequency baseline next to the model numbers;
+  CLAUDE.md asks for all three baselines. The brief block names frequency, says it is the best baseline on Brier, and
+  points to the full tables with all three right below it.
+
+### 4. After this commit
+`main` is left alone. Any further experiment goes on a branch.

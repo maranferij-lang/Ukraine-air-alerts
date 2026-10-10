@@ -226,12 +226,14 @@ def main():
                                         "observed": float(y[test].mean()), **{k: float(v) for k, v in d.items()}})
                     if H == 6 and name in ("lgbm", "frequency"):
                         reliability[name] = reliability_table(y[test], s)
-                per = {name: per_oblast_auc(y[test], predictors[name][0][test], rows.loc[test, "oblast"])
-                       for name in ["lgbm", "lgbm_2026", "logit", "frequency"]}
-                for a, b in [("lgbm", "frequency"), ("lgbm", "logit"), ("lgbm_2026", "lgbm")]:
-                    both = per[a].notna() & per[b].notna()
-                    wins.append({"H": H, "comparison": f"{PREDICTORS[a]} vs {PREDICTORS[b]}",
-                                 "oblasts_compared": int(both.sum()), "first_wins": int((per[a] > per[b])[both].sum())})
+                for period, mask in periods.items():
+                    per = {name: per_oblast_auc(y[mask], predictors[name][0][mask], rows.loc[mask, "oblast"])
+                           for name in ["lgbm", "lgbm_2026", "logit", "frequency"]}
+                    for a, b in [("lgbm", "frequency"), ("lgbm", "logit"), ("lgbm_2026", "lgbm")]:
+                        both = per[a].notna() & per[b].notna()
+                        wins.append({"H": H, "period": PERIODS[period], "comparison": f"{PREDICTORS[a]} vs {PREDICTORS[b]}",
+                                     "oblasts_compared": int(both.sum()),
+                                     "first_wins": int((per[a] > per[b])[both].sum())})
                 if H == 6:
                     t6 = rows[test].assign(p=fitted["lgbm"][test], y=y[test])
                     low = t6[t6["p"] < 0.1]
@@ -295,7 +297,8 @@ def main():
         "Top 10 features by share of total gain, full-history LightGBM test fit, per H.\n\n" + md_table(imp) + "\n")
     wins = pd.DataFrame(wins)
     (OUT / "oblast_wins.md").write_text(
-        "Target (b), all test rows: in how many oblasts the first predictor has the higher within-oblast AUC.\n\n"
+        "Target (b): in how many oblasts the first predictor has the higher within-oblast AUC, on all 24 test days "
+        "and on each period separately.\n\n"
         + md_table(wins) + "\n")
     (OUT / "lowest_bin_h6.md").write_text(
         "LightGBM, target (b), H = 6, test rows with predicted probability < 0.1, by oblast.\n\n"
