@@ -385,3 +385,198 @@ What it says:
 - Post-switch-only training experiment on the same test month.
 - Sunday re-pull: re-run `inspect_raw.py`, check duplicates and outages, then re-run everything. The test window
   follows the data end.
+
+---
+
+## 2026-10-10 — Round 3: first model (LightGBM, target b)
+
+### 0. Decisions taken (review of round 2, plus two questions asked before building)
+- Lviv/Volyn: confirmed upstream bug (substring match; the Lviv and Volyn keyword lists come before Odesa,
+  Vinnytsia and Chernihiv in the parser's dict). The README note stays as written. Recompute κ without them.
+- From now on, **within-oblast AUC is the main number**. Pooled AUC stays in the table, not in summaries.
+- 0/1 baselines (persistence, yesterday): no threshold search. Report precision/recall of the raw 0/1 prediction.
+- We model (b) and report (a) as "1 if active at t, else model(b)".
+- Added `CLAUDE.md` verbatim, as written by the user (the `---` fences in the message were not included).
+- Model spec as given: LightGBM, one model for all oblasts, oblast categorical, target (b), H = 1/3/6. Two changes,
+  each flagged and agreed before building:
+  1. **`freq4w` is rolling, not a fixed table.**
+     - As specified (one table from the last 4 weeks of train, applied to every row), each oblast × hour × weekday cell
+       is the mean of 4 outcomes. For training rows inside those 4 weeks, one of the 4 is the row's own target. For
+       older rows the table comes from their future.
+     - Now: for each origin t, target (b) at the same oblast and hour, 1–4 weeks earlier, averaged. Same meaning in
+       train and test.
+  2. **Validation fit + final fit.**
+     - Picking the F1 threshold on the last train week from a model trained on that week would tune it on in-sample,
+       overconfident scores.
+     - Now: a validation fit on train minus the last week picks the number of trees (early stopping) and the
+       threshold on that week. The test model is fit on all of train with those settings.
+     - **Known approximation:** the threshold comes from a slightly different model than the one scored on test. The
+       same applies to the frequency baseline: its threshold comes from a table fitted without the last week, its
+       test scores from the full-train table. The user chose to refit rather than drop the last week, because of the
+       drift finding (that week is the most valuable one to train on).
+- Post-switch-only training: not this round.
+- Git: the user renamed the working branch to `main` on GitHub. Fetched: `origin/main` = `cc7db72` (round 2), identical
+  to the local tree.
+
+### 1. κ without Lviv and Volyn: the parser bug is a small part of the drop
+Hourly `active`, volunteer vs official, pooled over oblasts, by quarter. This uses the current panels (restarts joined,
+outage hours masked), which is why 2026Q3 reads 0.448 here vs 0.415 in round 1. Round 1 counted the outage hours.
+
+| quarter | all 24 | without Lviv, Volyn | also without Donetsk, Zaporizhzhia, Kharkiv, Sumy, Dnipro |
+|---|---|---|---|
+| 2022Q3 | 0.985 | 0.985 | 0.987 |
+| 2024Q1 | 0.863 | 0.859 | 0.900 |
+| 2025Q1 | 0.691 | 0.682 | 0.718 |
+| 2025Q3 | 0.652 | 0.654 | 0.729 |
+| 2025Q4 | 0.549 | 0.573 | 0.653 |
+| 2026Q1 | 0.522 | 0.538 | 0.631 |
+| 2026Q2 | 0.502 | 0.517 | 0.588 |
+| 2026Q3 | 0.448 | 0.473 | 0.568 |
+
+- The Lviv/Volyn bug accounts for about **0.025** of a ~0.54 drop.
+- The five frontline oblasts with the lowest 2026 κ account for roughly another 0.1.
+- The remaining ~0.4 is a gradual divergence across the other 17 oblasts, and it starts *before* the raion switch
+  (0.86 in 2024Q1 → 0.69 in 2025Q1). Not explained by anything found so far. Logged as unexplained.
+
+### 2. The 3 rows where (a) ≠ (now or b) at H=1
+All three are origins that fall inside a joined restart gap:
+
+| oblast | t (UTC) | raw episode ended | restart | gap | joined episode |
+|---|---|---|---|---|---|
+| Dnipropetrovska | 2026-08-27 01:00 | 00:59:44 | 01:03:59 | 4.2 min | 08-26 23:01 → 08-27 02:32 |
+| Donetska | 2026-08-26 14:00 | 13:58:59 | 14:01:54 | 2.9 min | 08-26 05:22 → 15:18 |
+| Odeska | 2026-08-24 12:00 | 11:57:18 | 12:00:55 | 3.6 min | 08-24 11:33 → 12:09 |
+
+- "now" is read from raw episodes, so it says quiet. The joined episode spans t, so (a) = 1. The restart is joined,
+  so (b) = 0.
+- The identity is exact only with joined "now", which would peek at the restart.
+- Round-2 wording ("holds by construction") was too strong. README corrected.
+
+### 3. CLAUDE.md vs what we already do
+Nothing contradicts work already done. Two lines conflict with this round's decisions, and one needed interpretation:
+- "precision/recall at a threshold chosen on the last train week" vs this round's "0/1 baselines: raw prediction, no
+  threshold search". The rule as written has no 0/1 exception.
+- "frequency tables and any encodings fitted on train only" vs the rolling `freq4w`. Inside the test month, `freq4w`
+  uses test-month outcomes already observed by t (1–4 weeks earlier). That is known at t, the same way "starts in the
+  last 7d" is, but it is not "fitted on train only" in the literal sense.
+- "neighbours lagged one hour" is implemented as "the last completed hour": under alert at some point in [t−1h, t),
+  and starts in [t−6h, t). The alternative reading, the state at the instant t−1h with starts in (t−7h, t−1h], would
+  throw away the most recent hour.
+
+### 4. Rows
+- Features look back 7 days, so a row is used only if [t−7d, t+H] stays clear of the outage. That drops every test
+  origin after the outage: rows from Sep 3–5 have a 7-day window that includes Aug 29 – Sep 2.
+- Test origins: 2026-08-07 00:00 → 2026-08-28. That is 528 / 526 / 523 per oblast for H = 1/3/6, i.e.
+  **12,672 / 12,624 / 12,552 rows**, down from 13,824 / 13,728 / 13,584 in round 2.
+- The baselines are re-scored on these rows, so their numbers shift slightly from round 2. Example: persistence on
+  (a) at H=1 goes from Brier 0.100 to 0.098.
+- Train: 920,448 rows (H=1), 2022-03-23 onward. Validation fit: 916,416. Last week: 4,032.
+- Panel hand-check recipe updated: hours in [2026-08-07, 2026-08-29) give 12,672 rows. Shares 0.120 (`n_starts > 0`),
+  0.303 (`active`) and 0.205 (`active_at_start`), equal to the table's H=1 base rates.
+
+### 5. Features (`src/features.py`) and neighbours (`data/neighbours.csv`)
+- Implemented as specified, with exact boundaries from episode times.
+- State and coverage come from raw episodes. Start counts come from joined episodes; whether a start joins the
+  previous alert is decided at the start, so starts up to t are known at t.
+- Two choices made here:
+  - `hours_since_end` is capped at 720 h (30 days).
+  - Share-of-hours features are share of *time* under alert (minutes / 60).
+- Toy test: every value matched hand computation, including:
+  - a just-ended alert whose restart comes 3 min after t (quiet at t);
+  - a joined restart not counted as a new start;
+  - a neighbour alert starting exactly at t, ignored.
+- Real-data spot check: Kharkiv, 2026-08-20 15:00, `freq4w` = 1.0, equal to the four lagged targets by hand.
+- `data/neighbours.csv`: land borders between the 24 units, written by hand from the administrative map. 50 pairs;
+  Luhansk and Crimea are left out. It is not in `data/raw`, so the "never edit data/raw" rule is not affected.
+  **Worth a look by eye.**
+
+### 6. Model
+- Native LightGBM API, so no scikit-learn dependency (the sklearn wrapper requires it).
+- Parameters: binary objective, learning rate 0.05, 31 leaves, min 200 rows per leaf, seed 0, deterministic.
+- Trees from early stopping on the last train week: **116 / 97 / 81** for H = 1/3/6.
+- No other tuning.
+
+### 7. No-peeking check (`scripts/check_no_peeking.py`)
+- Same 40 origins as round 2; confirmed identical to the saved list.
+- Rebuilt from data truncated at t:
+  - **0 mismatches in 6,720** baseline-input values;
+  - **0 mismatches in 37,440** feature values (13 numeric features × 3 H × 24 oblasts × 40 origins).
+- Negative controls:
+  - the future target (b) H=6 mismatches on all 421 true positives;
+  - a deliberately leaky feature (`share_6h` evaluated 1h past t) mismatches on 161 of 960.
+- Training windows close by 2026-08-07 00:00; validation-fit windows close by 2026-07-31 00:00.
+
+### 8. Results (`results/test_table.md`, `figures/model_vs_baselines_h6.png`)
+Target (b), within-oblast AUC / Brier:
+
+| H | base rate | LightGBM | same as now | same hour yesterday | train frequency |
+|---|---|---|---|---|---|
+| 1 | 0.120 | **0.696 / 0.087** | 0.443 / 0.281 | 0.516 / 0.178 | 0.500 / 0.100 |
+| 3 | 0.290 | **0.651 / 0.143** | 0.485 / 0.319 | 0.515 / 0.280 | 0.602 / 0.174 |
+| 6 | 0.421 | **0.644 / 0.141** | 0.491 / 0.358 | 0.508 / 0.273 | 0.629 / 0.176 |
+
+- The model beats all three baselines on both numbers at every H.
+- F1 (threshold from the last train week): 0.422 / 0.651 / 0.763, vs the frequency baseline's 0.329 / 0.615 / 0.762.
+  At H=6 they are tied.
+- **The within-oblast mean is noisy.**
+  - Seven western oblasts had fewer than 10 new alerts in the test rows: Lviv, Ivano-Frankivsk and Zakarpattia 1
+    each, Chernivtsi and Volyn 2, Ternopil 6, Rivne 9. Their AUCs are close to noise but count equally in the mean.
+  - Restricted to the 17 oblasts with ≥10 alerts: H=1 model 0.670 vs frequency 0.560; H=6 model 0.611 vs 0.592.
+  - Oblast by oblast, the model beats the frequency baseline in **23 of 24 at H=1 but only 13 of 24 at H=6**.
+- So the H=1 gain is real. The H=6 ranking gain within oblasts is not established.
+- Target (a) as "active at t, else model(b)", within-oblast AUC / Brier:
+  - H=1: 0.831 / 0.068 vs persistence 0.750 / 0.098;
+  - H=6: 0.704 / 0.104 vs frequency 0.617 / 0.137.
+- Per-oblast base rates of (b) are in `results/base_rates_by_oblast.md`.
+  - Sumy (0.941 at H=6) and Kharkiv (0.939) are at the top; Lviv, Ivano-Frankivsk and Zakarpattia (0.011 each, the
+    same single western alert) at the bottom.
+  - Donetsk is only 0.358, because it is almost always on, so new starts are rare.
+
+### 9. Do the probabilities mean anything (`results/calibration.md`, `figures/reliability_h6.png`)
+Brier ≈ reliability − resolution + uncertainty, 10 equal-width bins, target (b), test month:
+
+| H | predictor | mean predicted | observed | Brier | reliability (miscalibration) | resolution |
+|---|---|---|---|---|---|---|
+| 1 | LightGBM | 0.108 | 0.120 | 0.0866 | 0.0004 | 0.0180 |
+| 1 | frequency | 0.086 | 0.120 | 0.0998 | 0.0017 | 0.0057 |
+| 3 | LightGBM | 0.272 | 0.290 | 0.1434 | 0.0013 | 0.0625 |
+| 3 | frequency | 0.226 | 0.290 | 0.1737 | 0.0120 | 0.0431 |
+| 6 | LightGBM | 0.414 | 0.421 | 0.1414 | 0.0012 | 0.1024 |
+| 6 | frequency | 0.369 | 0.421 | 0.1757 | 0.0179 | 0.0851 |
+
+- **The model's probabilities are well calibrated.** Reliability is ≤ 0.0013 at every H, and its mean prediction is
+  within 0.02 of the observed rate.
+  - At H=6 the lowest bin over-predicts (0.069 predicted vs 0.027 observed).
+  - The bins from 0.4 up under-predict by 0.01–0.06.
+- **The frequency baseline is the badly calibrated one.** At H=6, predicted 0.35 means observed 0.58, and the
+  extremes are too extreme. That's the stale full-history table again.
+- Where the model's Brier gain over frequency comes from:
+  - H=1: mostly resolution (+0.012 vs +0.001 from calibration);
+  - H=6: about half each (calibration +0.017, resolution +0.017).
+- It is not "well separated but badly calibrated". If anything, it is the reverse: well calibrated, and at H=6 only
+  modestly better separated.
+
+### 10. Feature importance (`results/feature_importance.md`, share of total gain, test-fit model)
+- `starts_7d` dominates: **48.5% / 62.6% / 71.8%** for H = 1/3/6. In effect, the oblast's current week of activity
+  is a recency-weighted base rate.
+- At H=1 the short-term signals matter next: `now` 11.2%, `nb_share_1h` 8.5%, `hour` 7.6%, `share_7d` 6.1%.
+- At H=6, `oblast` (7.5%), `freq4w` (6.5%) and `hour` (4.2%) follow.
+- Reading: the model is mostly "how busy has this oblast been this week", plus neighbours and current state for the
+  next hour. That fits the 23-of-24 vs 13-of-24 pattern above.
+
+### 11. Found / broken / changed along the way
+- The LightGBM sklearn wrapper needs scikit-learn → switched to `lgb.train`. `requirements.txt` gains `lightgbm>=4.0`.
+- The feature-importance table first aligned the H columns by feature name (NaN cells). Fixed to align by rank.
+- My first README draft said the H=6 Brier gain is "mostly calibration". The decomposition says half and half.
+  Corrected before commit.
+- `scripts/evaluate_baselines.py` and its outputs (`results/baselines_test.*`, `figures/baselines_h6.png`) are
+  removed. `scripts/evaluate.py` produces the same baseline columns on the model's rows. Round-2 numbers stay in this
+  log and in commit `cc7db72`.
+- Shared row/target/split code moved from the round-2 script into `src/dataset.py`. `split` now also returns the
+  "before last week" mask used by the validation fit.
+
+### 12. Next (not done)
+- Post-switch-only training on the same test month.
+- Weekly refits if the test month drifts. One check: the frequency baseline's under-prediction says the level
+  drifts; the model's `starts_7d` already tracks it.
+- Sunday re-pull (the user does it): re-run `inspect_raw.py`, check for duplicates and outages, then re-run everything.
