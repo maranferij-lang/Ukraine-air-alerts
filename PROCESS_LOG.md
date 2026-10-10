@@ -802,3 +802,39 @@ Both were already true of the round-4 outputs. The README now also has a Sep 4�
 
 ### 4. After this commit
 `main` is left alone. Any further experiment goes on a branch.
+
+---
+
+## 2026-10-10 — Round 6 (main): pointer to the news experiment, ground-rules wording
+
+This is the one commit on `main` the user approved after round 5. After it, `main` is frozen.
+
+### News experiment (lives on branch `news`, not merged)
+- **What was tried:** two national features on "LightGBM from 2026-01-01": the hourly count of GDELT conflict events
+  (CAMEO 18/19/20) located in Ukraine, over 24h and over the previous full day.
+  - **Leakage rule:** timed by when each record was added to GDELT and lagged one hour.
+  - Same rows, split and thresholds as main, with the three baselines in the same rows.
+- **Result:** it did not help.
+  - Within-oblast AUC is lower at H=1 and H=3 and level at H=6.
+  - Brier is slightly worse.
+  - The trees most likely use the drifting national count as a calendar: many splits for little gain, and early
+    stopping comes sooner. This is untested.
+- The full write-up, numbers and log are in the branch's README ("News and text data") and its PROCESS_LOG.
+  Branch commits: 80847e3, 0fe68ab, e67cdc7.
+- **README:** "No text experiment has been run" is replaced by two sentences that point to the branch, with a link
+  to its README section on GitHub.
+  - Following the README rule, they quote no model numbers, since a model number on main would need its baselines
+    next to it.
+  - The first line of that section ("We did not use … any news or Telegram text") stays. It is still true of the
+    model on main.
+
+### Ground rules block in the README
+- The README still said "Every aggregate is computed on the training period only". That has been stale since
+  round 3, when the rolling features (share/starts windows, freq4w) arrived: they use everything observed by t,
+  including test-period history.
+- Reworded to match `CLAUDE.md`:
+  - every feature for origin t uses only what is known at t;
+  - neighbours use the last completed hour [t−1h, t);
+  - static tables (the frequency baseline) are fitted on train only;
+  - rolling features may use anything already observed by t.
+- No code or result changed on `main`. The round-5 outputs stand as committed.

@@ -12,8 +12,9 @@ One model covers all oblasts, with oblast as a feature.
 - **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
 
 Ground rules (fixed):
-- No leakage. Every aggregate is computed on the training period only. Splits are
-  chronological, never random.
+- No leakage. Every feature for origin t uses only what is known at t. Neighbours use the last
+  completed hour [t−1h, t). Static tables (the frequency baseline) are fitted on train only;
+  rolling features may use anything already observed by t. Splits are chronological, never random.
 - Every model number is shown next to three baselines. If the model doesn't beat them, we say so.
 - Metrics: Brier, **ROC-AUC within oblast** (main number), precision/recall at a threshold. No
   plain accuracy.
@@ -202,7 +203,10 @@ We did not use the alert messages themselves, or any news or Telegram text.
 - A text feature would have to come from sources other than the alert channels, timestamped
   strictly before t.
 
-No text experiment has been run. This section is where one would go.
+We tried one news feature in the 2026-only LightGBM: the national hourly count of GDELT conflict
+events located in Ukraine, timed by when each record was added to GDELT and lagged one hour.
+It did not improve within-oblast AUC or Brier at any H; the numbers, next to the three baselines,
+are on the [`news` branch](https://github.com/maranferij-lang/Ukraine-air-alerts/blob/news/README.md#news-and-text-data).
 
 ## Limitations and what we would do next
 Limitations:
