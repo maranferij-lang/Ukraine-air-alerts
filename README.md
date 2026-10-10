@@ -36,8 +36,9 @@ Ground rules (fixed):
   plain accuracy.
 - Working rules for this repo are in `CLAUDE.md`.
 
-**Status:** final pass (round 5). LightGBM for target (b), checked against a plain logistic
-regression and a post-switch-only fit, next to the three baselines.
+**Status:** final. Rounds 1–7 on `main`; the news experiment (negative result) is on branch `news`.
+LightGBM for target (b), checked against a plain logistic regression and a post-switch-only fit,
+next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
 **Branch `news`:** main plus one experiment, a GDELT news-intensity feature. It did not help;
