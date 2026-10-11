@@ -36,7 +36,7 @@ def slow_features(oblasts, t, posts, lag):
     rows = []
     for ob in oblasts:
         mine = p[p["units"].map(lambda s: ob in s)]
-        last6 = p[p["time"] >= e - 6 * H]
+        last6 = p[(p["time"] >= e - 6 * H) & (p["units"].map(len) > 0)]  # posts naming an oblast
         in6 = mine[mine["time"] >= e - 6 * H]
         since = (t - mine["time"].max()) / pd.Timedelta(minutes=1) if len(mine) else CAP_MIN
         r = {"tg_m1h": float((mine["time"] >= e - H).any()), "tg_m3h": float((mine["time"] >= e - 3 * H).any()),

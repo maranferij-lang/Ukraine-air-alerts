@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.dataset import load_inputs
+from src.telegram_features import threat_flags
 from src.telegram_oblasts import UNITS, mentioned
 
 K, KC = "Kyivska oblast", "Kyiv City"
@@ -52,14 +53,38 @@ CASES = [
 ]
 
 
+FLAGS = [  # (text, flags expected)
+    ("🚀КР на півночі Херсонщини в напрямку Миколаївщини.", {"tg_missile"}),
+    ("Крилаті ракети повз Шаргород", {"tg_missile"}),
+    ("Ракета на півночі Чернігівщини, вектор - Київ", {"tg_missile"}),
+    ("🚀Швидкісні цілі у Запорізькій області", {"tg_missile"}), ("Швидкісна ціль на Харків!", {"tg_missile"}),
+    ("☄️ Загроза застосування балістичного озброєння з півночі.", {"tg_ballistic"}),
+    ("Кинджал на Одещину", {"tg_ballistic", "tg_missile"}),
+    ("🚀 Пуски КАБ на Харківщині.", {"tg_kab"}), ("КАБи на північ Сумщини!", {"tg_kab"}),
+    ("Пуски керованих авіаційних бомб ворожою тактичною авіацією", {"tg_kab"}),
+    ("Активність ворожої тактичної авіації на східному напрямку", {"tg_kab"}),
+    ("🛵 БпЛА на Харків з півночі.", set()), ("Реактивний БпЛА на Київщину", set()), ("Кабмін ухвалив рішення", set()),
+    ("📢 Відбій загрози застосування балістичного озброєння.", set()),
+    ("Відбій загрози для Миколаївської області. 🚀КР на Одещину", {"tg_missile"}),
+    ("⚡️ ЗБИТО/ПОДАВЛЕНО 26 РАКЕТ ТА 515 ВОРОЖИХ БПЛА", set()),
+]
+
+
+flags = threat_flags
+
+
 def main():
     bad = [(t, want, mentioned(t)) for t, want in CASES if mentioned(t) != want]
     for t, want, got in bad:
         print(f"FAIL {t!r}: wanted {sorted(want)}, got {sorted(got)}")
+    bad_flags = [(t, want, flags(t)) for t, want in FLAGS if flags(t) != want]
+    for t, want, got in bad_flags:
+        print(f"FAIL flags {t!r}: wanted {sorted(want)}, got {sorted(got)}")
+    assert not bad_flags, f"{len(bad_flags)} of {len(FLAGS)} flag cases failed"
     names = set(load_inputs()[0]["oblast"].unique())
     assert set(UNITS) == names, (set(UNITS) ^ names)
     assert not bad, f"{len(bad)} of {len(CASES)} cases failed"
-    print(f"ok: {len(CASES)} cases; the parser knows exactly the {len(UNITS)} units of the alert data")
+    print(f"ok: {len(CASES)} oblast cases and {len(FLAGS)} threat-flag cases; the parser knows exactly the {len(UNITS)} units of the alert data")
 
 
 if __name__ == "__main__":

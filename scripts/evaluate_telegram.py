@@ -220,6 +220,20 @@ def main():
         + md_table(drift.reset_index(), "{:.3f}") + "\n")
     wrote(OUT / "feature_drift_by_month.md")
 
+    # how often each column is 1 / what it looks like: per post, and per (oblast, hour) over the 2026 rows used
+    flags = ["tg_ballistic", "tg_missile", "tg_kab"]
+    prev = pd.DataFrame({
+        "share of posts": [posts[c].mean() for c in flags],
+        "share of oblast-hours, lag 0": [tg["tg0"].loc[sel, c].mean() for c in flags],
+        "share of oblast-hours, lag 15min": [tg["tg15"].loc[sel, c].mean() for c in flags]}, index=flags)
+    other = pd.DataFrame({lag: tg[lag].loc[sel, ["tg_m1h", "tg_m3h", "tg_share6h", "tg_min_since"]].mean() for lag in LAGS})
+    (OUT / "flag_prevalence.md").write_text(
+        "How often each national flag is 1 (2026 training and test rows; posts: all 2026 posts incl. the last days of 2025):\n\n"
+        + md_table(prev.reset_index().rename(columns={"index": "flag"}), "{:.3f}") + "\n\n"
+        f"Posts naming at least one oblast: {(posts['units'].map(len) > 0).mean():.1%} of {len(posts)}. Mean of the oblast columns "
+        "over the same rows:\n\n" + md_table(other.reset_index().rename(columns={"index": "column"}), "{:.3f}") + "\n")
+    wrote(OUT / "flag_prevalence.md")
+
     summary(res)
     if not args.verbose:
         return
