@@ -1,0 +1,7 @@
+origins: 40 from 2026-08-07 10:00:00+00:00 to 2026-09-05 02:00:00+00:00 (same as check_no_peeking.py)
+features rebuilt from posts published before t - lag only: 13440 values, mismatches 0
+independent slow implementation vs vectorized features: 13440 values, mismatches 0
+negative control, window ending 15 minutes after t: differs at 36 of 40 origins; 29 of the 29 origins with a post that can change a column in [t, t+15min) differ
+negative control, lag 0 vs lag 15 min features: differ at 39 of 40 origins; 28 of the 28 origins with such a post in [t-15min, t) differ
+posts marked edited: 602 of 25949 (2.3%); in the test window 135 of 5321
+share of 2026 rows whose value changes materially if edited posts are dropped (lag 0; share6h by >0.05, minutes by >15, 0/1 flipped): tg_m1h 0.30%, tg_m3h 0.37%, tg_share6h 0.77%, tg_min_since 1.72%, tg_ballistic 0.39%, tg_missile 1.24%, tg_kab 0.40%

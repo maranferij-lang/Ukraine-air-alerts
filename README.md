@@ -86,6 +86,9 @@ LightGBM for target (b), checked against a plain logistic regression and a post-
 next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
+**Telegram experiment (branch `telegram`, not merged):** per-oblast features from the Air Force channel's posts; see
+"News and text data" below.
+
 **News experiment:** a GDELT news-intensity feature, merged as a documented negative result: it did
 not help, and the model above does not use it. See "News and text data" below.
 
@@ -348,6 +351,99 @@ Feature importance (`results/news/feature_importance.md`):
 - Merged into `main` as a documented negative result, so the whole project reads in one place.
   The model in the sections above does not use the news columns.
 
+### Experiment: per-oblast Telegram posts of the Air Force channel (branch `telegram`, not merged)
+**What we tried.**
+- **Source:** the public preview of `t.me/s/kpszsu` (Air Force of the Armed Forces of Ukraine), pulled with
+  `scripts/fetch_telegram_kpszsu.py`: 25,949 posts from 2025-12-31 to 2026-09-08, one request at a time,
+  with retries after connection resets. The CSV with each post's id, UTC time, "edited" flag and text is
+  committed (`data/telegram/kpszsu_posts.csv`); the posts are public.
+- **Content:** short threat reports, e.g. "БпЛА на Харків з півночі". They are not the alert itself; the
+  alert is the official siren in our data.
+- **Per oblast, not national.** The channel's post rate rose from about 93 posts a day in January to 179
+  in September, so a national count would turn into a calendar (as the GDELT count did). All columns are
+  bounded or relative.
+
+**Leakage rule.** A post counts at origin t only if its post time is strictly before t (lag 0). To show
+the gain does not ride on the minutes between a post and a siren, everything is also run with posts before
+t − 15 min (lag 15), with the windows shifted back by 15 minutes. `scripts/check_no_peeking_telegram.py`
+(`results/telegram/no_peeking.txt`):
+- 13440 values rebuilt from the posts before t − lag only: 0 mismatches; a second, independent implementation: 0 mismatches;
+- negative control, a window ending 15 minutes after t: it differs at every origin with a relevant post in
+  those minutes (29 of the 29 origins);
+- negative control, lag 0 against lag 15: it differs at every origin with a relevant post in the 15
+  minutes (28 of the 28 origins).
+
+**Which oblast does a post name?** (`src/telegram_oblasts.py`, tests in `scripts/test_telegram_parser.py`)
+- Matching is on word starts, with Ukrainian declensions and the main cities; hyphenated names such as
+  Кам'янець-Подільський and Переяслав-Хмельницький are matched as whole phrases first.
+- It does not repeat the volunteer feed's substring bug. "Подільський район" names no oblast, and in
+  the real posts goes to Odesa through "Одещина"; "Прилуцький район" goes to Chernihiv; nothing goes to
+  Lviv or Volyn by accident. The 50 random posts and every post containing these strings were read by hand
+  (`results/telegram/parser_check_50.md`).
+- 88.9% of the posts name at least one oblast; the rest are mostly nationwide bulletins.
+- "Відбій" (all-clear) sentences count as neither a mention nor a threat.
+
+**Seven columns** (`src/telegram_features.py`):
+- `tg_m1h`, `tg_m3h`: this oblast is named in a post in the last 1 h / 3 h (0/1);
+- `tg_share6h`: its share of the posts in the last 6 h, among posts that name at least one oblast;
+- `tg_min_since`: minutes since it was last named, capped at 24 h;
+- `tg_ballistic`, `tg_missile`, `tg_kab`: national 0/1, a post of that type in the last 3 h (ballistic;
+  any missile: КР, крилат, ракет, швидкісн ціл, кинджал; glide bomb / tactical aviation: КАБ, керован
+  авіабомб, тактичн авіац). Share of posts and of oblast-hours (lag 0) where each is 1 (`results/telegram/flag_prevalence.md`): ballistic in 4.5% of posts and 26.3% of oblast-hours; missile in 6.3% of posts and 26.8% of oblast-hours; kab in 21.2% of posts and 79.7% of oblast-hours.
+- A national drone flag was dropped: drone posts are so constant that it would be 1 in nearly every hour (measured
+  in `PROCESS_LOG.md`), and the oblast mentions already carry the drone signal.
+
+**Fair test.** "LightGBM from 2026-01-01" with and without the seven columns: same rows, split, training
+rows and thresholds. Every row except the Telegram ones reproduces `results/test_table.csv` exactly.
+
+**Results.** New alert within H hours (b), within-oblast AUC / Brier (`results/telegram/test_table.md`,
+`results/telegram/test_table_by_period.md`):
+
+| H | 2026 + Telegram (posts < t) | 2026 + Telegram (posts < t−15 min) | 2026 | full history (main) | same as now | same hour yesterday | train frequency |
+|---|---|---|---|---|---|---|---|
+| all 24 days, 1 | 0.681 / 0.086 | 0.614 / 0.086 | 0.648 / 0.087 | 0.688 / 0.087 | 0.438 / 0.288 | 0.525 / 0.181 | 0.495 / 0.101 |
+| all 24 days, 3 | 0.638 / 0.142 | 0.605 / 0.142 | 0.642 / 0.142 | 0.645 / 0.145 | 0.480 / 0.327 | 0.524 / 0.281 | 0.581 / 0.177 |
+| all 24 days, 6 | 0.631 / 0.138 | 0.623 / 0.139 | 0.619 / 0.139 | 0.639 / 0.140 | 0.489 / 0.365 | 0.516 / 0.267 | 0.612 / 0.178 |
+| Sep 4–5, 1 | 0.575 / 0.096 | 0.539 / 0.096 | 0.555 / 0.096 | 0.534 / 0.098 | 0.359 / 0.365 | 0.538 / 0.218 | 0.466 / 0.119 |
+| Sep 4–5, 3 | 0.493 / 0.158 | 0.488 / 0.159 | 0.471 / 0.159 | 0.476 / 0.158 | 0.395 / 0.425 | 0.519 / 0.297 | 0.424 / 0.218 |
+| Sep 4–5, 6 | 0.466 / 0.123 | 0.421 / 0.124 | 0.440 / 0.122 | 0.447 / 0.120 | 0.392 / 0.444 | 0.501 / 0.196 | 0.409 / 0.203 |
+
+Pooled AUC, all 24 days: H=1: 0.835 (lag 0), 0.833 (15 min) vs 0.831 without; H=3: 0.849 (lag 0), 0.849 (15 min) vs 0.848 without; H=6: 0.883 (lag 0), 0.882 (15 min) vs 0.882 without.
+
+Paired comparison, with Telegram minus without (`results/telegram/telegram_vs_no_telegram.md`; day-block
+bootstrap, point value and 95% interval):
+- posts before t (lag 0):
+  - H=1: +0.0322 [+0.0039, +0.0531] AUC; -0.0006 [-0.0011, -0.0001] Brier; 20 of 24 oblasts have the higher AUC
+  - H=3: -0.0038 [-0.0128, +0.0096] AUC; -0.0003 [-0.0009, +0.0002] Brier; 10 of 24 oblasts have the higher AUC
+  - H=6: +0.0124 [+0.0060, +0.0191] AUC; -0.0005 [-0.0011, -0.0000] Brier; 16 of 24 oblasts have the higher AUC
+- posts before t − 15 min (lag 15):
+  - H=1: -0.0344 [-0.0501, +0.0078] AUC; -0.0003 [-0.0005, -0.0001] Brier; 13 of 24 oblasts have the higher AUC
+  - H=3: -0.0365 [-0.0594, +0.0104] AUC; -0.0004 [-0.0010, +0.0001] Brier; 9 of 24 oblasts have the higher AUC
+  - H=6: +0.0042 [-0.0070, +0.0125] AUC; -0.0000 [-0.0007, +0.0006] Brier; 11 of 24 oblasts have the higher AUC
+
+Feature importance (`results/telegram/feature_importance.md`): only `tg_min_since` carries weight; H=1: rank 9 of 21 (3.3% of gain) at lag 0, rank 10 (2.0%) at lag 15; H=3: rank 13 of 21 (1.3% of gain) at lag 0, rank 15 (0.9%) at lag 15; H=6: rank 11 of 21 (0.9% of gain) at lag 0, rank 13 (0.8%) at lag 15.
+`tg_m1h` and `tg_m3h` take 0.0% of the gain (each is a threshold of `tg_min_since`: named within the last
+60 or 180 minutes, plus 15 at lag 15); `tg_share6h` and the three flags take 0.1–0.5% each.
+
+**What this says.**
+- With posts up to t, Telegram improves H=1 and H=6 a little. The Brier change is at most 0.0006.
+- With the 15-minute lag the within-oblast AUC gain is gone at H=1 and H=6 (H=1: lower, the interval
+  includes zero), and H=3 shows no gain at either lag. So the gain depends on posts from the last 15 minutes.
+- Within-oblast AUC moves by 0.03–0.04 between models with the same Brier (main's full-history model
+  against the 2026 model at H=1: 0.688 against 0.648, Brier 0.087 for both), and the bootstrap covers
+  the sampling of days only, not a refit. Read the AUC differences with that in mind.
+- On Sep 4–5 same hour yesterday still has the higher within-oblast AUC than every LightGBM variant at H=3
+  and H=6.
+
+**Limitations.**
+- Deleted posts are invisible: the page shows the channel as it is now, not as it looked at t.
+- Edited posts keep their original time, but their text is the text at pull time and may have changed
+  after t. 602 posts (2.3%) are marked edited, 135 of 5,321 in the test window. Leaving them out changes
+  at most 1.7% of the values of any column materially (last line of `no_peeking.txt`).
+- The place list is not exhaustive: 11.1% of posts name no oblast, and ambiguous place names are left out
+  on purpose.
+- Sep 4–5 is 48 origins per oblast.
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -393,6 +489,12 @@ python scripts/check_gdelt_events.py # gaps, heavy days, figures/gdelt_weekly.pn
 python scripts/news_correlation.py   # news vs starts_7d / share_7d on training rows
 python scripts/evaluate_news.py      # 2026 model with and without news -> results/news/
 python scripts/check_no_peeking_news.py  # leakage check for the news columns
+# telegram experiment (branch telegram)
+python scripts/fetch_telegram_kpszsu.py   # optional: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
+python scripts/test_telegram_parser.py    # oblast parser and threat-flag tests
+python scripts/telegram_parser_check.py   # 50 random posts + substring traps -> results/telegram/parser_check_50.md
+python scripts/evaluate_telegram.py       # 2026 model with and without Telegram, lag 0 and 15 min -> results/telegram/
+python scripts/check_no_peeking_telegram.py  # leakage check for the Telegram columns
 ```
 
 ## Definitions
@@ -442,8 +544,10 @@ src/logit.py         plain logistic regression (Newton / IRLS), the comparison m
 src/baselines.py     the three baselines
 src/metrics.py       Brier (+ decomposition), AUC, precision/recall/F1, max-F1 threshold
 src/news.py          national GDELT news features (the news experiment)
+src/telegram_*.py     Telegram post parser (oblasts, threat types) and per-oblast features (the Telegram experiment)
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features
 data/news/           GDELT hourly aggregate + pull record (the news experiment)
+data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
 scripts/             one script per step, run from the repo root
 results/             evaluation tables

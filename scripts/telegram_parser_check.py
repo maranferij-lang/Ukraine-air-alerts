@@ -57,7 +57,7 @@ def main():
               f"- posts naming at least one oblast: {len(posts) - len(none)} of {len(posts)} ({1 - len(none) / len(posts):.1%})",
               f"- units per post: {dict(posts['units'].map(len).value_counts().sort_index())}",
               f"- threat flags (share of posts): " + ", ".join(f"{n[3:]} {posts[n].mean():.1%}" for n in THREATS),
-              f"- most common words in the {len(none)} posts naming no oblast: {words.most_common(40)}"]
+              f"- most common words in the {len(none)} posts naming no oblast: {sorted(words.items(), key=lambda kv: (-kv[1], kv[0]))[:40]}"]
     out = ROOT / "results" / "telegram" / "parser_check_50.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n")
