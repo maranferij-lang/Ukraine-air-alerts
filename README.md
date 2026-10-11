@@ -15,17 +15,61 @@ One model covers all oblasts, with oblast as a feature.
 ```bash
 git clone https://github.com/maranferij-lang/Ukraine-air-alerts
 cd Ukraine-air-alerts
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+brew install libomp                   # macOS only: lightgbm needs it, or `import lightgbm` crashes
 pip install -r requirements.txt       # ~30 s
 python scripts/plot_weekly.py         # ~10 s    -> figures/alerts_per_week.png (+ .csv)
-python scripts/evaluate.py            # ~1.5 min -> results/, figures/model_vs_baselines_h6.png, figures/reliability_h6.png
+python scripts/evaluate.py            # ~1.5 min -> results/, figures/model_vs_baselines_h6.png, figures/reliability_h6.png, models/
+python scripts/evaluate_news.py       # ~2 min   optional: the news experiment -> results/news/, figures/gdelt_weekly.png
 python scripts/check_no_peeking.py    # ~25 s    optional: leakage check, prints only
 ```
-- **Tested** from a fresh clone and a fresh venv on Python 3.11, 3.12 and 3.13 (Linux, 4 cores):
-  - packages: pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0;
-  - on all three, every file in `results/` and `figures/` came out byte-identical to the committed ones.
-- **No download needed:** the data snapshot (`data/raw/`, upstream commit `7ccd436`) is in the repo.
-  The full step-by-step order is in "Run order" below.
+- **Tested** from a fresh clone and a fresh venv (Linux, 4 cores), running every command above
+  plus `predict.py`:
+  - **Python 3.11, 3.12 and 3.13** (pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0):
+    every file in `results/` and `figures/` came out byte-identical to the committed ones.
+  - **Python 3.9** (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0): every file in
+    `results/` came out byte-identical. The four PNGs differ by a few pixels of layout, because the
+    older matplotlib draws them slightly differently; the numbers behind them are the same.
+  - **Python 3.9 on macOS arm64**, with the same packages, also reproduced every number.
+- **Windows** (cmd or PowerShell): run the lines one at a time, leave out the `# …` comments, and
+  activate with `.venv\Scripts\activate`.
+- **No download needed:** the data snapshots are in the repo: alerts in `data/raw/` (upstream commit
+  `7ccd436`), hourly GDELT counts in `data/news/`. `scripts/fetch_data.py` and
+  `scripts/fetch_gdelt_events.py` only re-pull them, and need network.
+- `evaluate.py` also saves the fitted models to `models/` (not committed) for `scripts/predict.py`,
+  below. The full step-by-step order is in "Run order".
+
+## Usage
+**What the model would have said at a past hour** (`scripts/predict.py`; run `evaluate.py` first):
+```bash
+python scripts/predict.py --at "2026-09-05 14:00" --oblast Kyivska      # one oblast; time in UTC
+python scripts/predict.py --at "2026-09-05 17:00+03:00" --oblast Lviv   # same hour, written in Kyiv time
+python scripts/predict.py --at "2026-09-05 14:00" --all                 # every oblast, one row each
+```
+- **Output:** the probability that a new alert starts within 1, 3 and 6 hours. Next to it are the
+  three baselines (same as now, same hour yesterday, train frequency) and what actually happened,
+  plus the time of the next new alert.
+- **Inputs are recomputed from the alert data as it stood at that hour:** only alerts that had
+  started by then, with the end of a running alert unknown. This is the same cut
+  `check_no_peeking.py` checks.
+- **Any hour in the data range is allowed** (2022-03-16 00:00 → 2026-09-05 23:00 UTC). Times are
+  rounded down to the hour.
+  - Hours before 2026-08-07 are marked **TRAINING PERIOD**: the model has seen what happened next,
+    so those numbers are not forecasts.
+  - Hours whose data touches the 2026-08-29..09-02 feed outage are flagged.
+- **Oblast names** as in the data, without "oblast", in any case, or any unique start: `Kyivska`,
+  `Kyiv City`, `Lviv`. `Kyiv` alone is ambiguous.
+- If `models/` is missing, `predict.py` says to run `evaluate.py` first.
+
+**Flags**
+- `evaluate.py` prints one progress line per step and one "wrote …" line per file, then a short
+  summary: LightGBM next to the train-frequency baseline, on all 24 test days and on Sep 4–5. A
+  note follows wherever another baseline has the higher within-oblast AUC (on Sep 4–5, same hour
+  yesterday does at every H).
+- `evaluate.py --verbose` also prints every table. They are all in `results/` anyway.
+- `evaluate_news.py [--verbose]` does the same for the news experiment. It runs the whole news
+  chain from `data/news/`: correlation, comparison, leakage check, and the weekly plot, building the
+  hourly panel the plot needs if it is missing.
 
 Ground rules (fixed):
 - No leakage. Every feature for origin t uses only what is known at t. Neighbours use the last
@@ -36,13 +80,14 @@ Ground rules (fixed):
   plain accuracy.
 - Working rules for this repo are in `CLAUDE.md`.
 
-**Status:** final. Rounds 1–7 on `main`; the news experiment (negative result) is on branch `news`.
+**Status:** final. Rounds 1–8 on `main`, including the news experiment, merged as a documented
+negative result.
 LightGBM for target (b), checked against a plain logistic regression and a post-switch-only fit,
 next to the three baselines.
 `PROCESS_LOG.md` has every step; results are in `results/`.
 
-**Branch `news`:** main plus one experiment, a GDELT news-intensity feature. It did not help;
-see "News and text data" below.
+**News experiment:** a GDELT news-intensity feature, merged as a documented negative result: it did
+not help, and the model above does not use it. See "News and text data" below.
 
 ## Data
 
@@ -217,13 +262,13 @@ How to read it:
   `figures/model_vs_baselines_h6.png`. Feature importance: `results/feature_importance.md`.
 
 ## News and text data
-We did not use the alert messages themselves, or any news or Telegram text.
+The main model uses no text: not the alert messages themselves, and no news or Telegram text.
 - Every alert in this data is a message. The message announcing an alert, or the launch behind
   it, *is* the target. Using its text would hand the model the answer.
 - A text feature would have to come from sources other than the alert channels, timestamped
   strictly before t.
 
-### Experiment: national news intensity from GDELT (branch `news` only, not merged)
+### Experiment: national news intensity from GDELT (a documented negative result)
 **What we tried.**
 - **Source:** GDELT 2.0 event files, 2026-01-01 → 09-07 (`scripts/fetch_gdelt_events.py`). Only the
   hourly aggregate is committed (`data/news/`); the raw files can be re-pulled with the script.
@@ -300,7 +345,8 @@ Feature importance (`results/news/feature_importance.md`):
 - Brier is slightly worse, and the interval is above zero at H=3 and H=6.
 - On Sep 4–5 the news model has the higher AUC at every H. That is 48 origins per oblast, so it
   shows nothing either way.
-- Not merged. The branch stays as a record, and main's README points here.
+- Merged into `main` as a documented negative result, so the whole project reads in one place.
+  The model in the sections above does not use the news columns.
 
 ## Limitations and what we would do next
 Limitations:
@@ -340,9 +386,10 @@ python scripts/plot_weekly.py        # figures/alerts_per_week.png (+ .csv)
 python scripts/hand_checks.py        # round-1 hand-check numbers (needs the three panels)
 python scripts/evaluate.py           # model + baselines: tables in results/, H=6 plots
 python scripts/check_no_peeking.py   # leakage check: baseline inputs and model features
-# news experiment (branch news)
-python scripts/fetch_gdelt_events.py # optional: re-pull GDELT events, about 9 minutes -> data/news/
-python scripts/check_gdelt_events.py # gaps, heavy days, figures/gdelt_weekly.png
+python scripts/predict.py --at "2026-09-05 14:00" --all   # model at a past hour (needs models/)
+# news experiment (scripts/evaluate_news.py runs the four steps after the re-pull)
+python scripts/fetch_gdelt_events.py # optional: re-pull GDELT events, about 9 minutes, needs network -> data/news/
+python scripts/check_gdelt_events.py # gaps, heavy days, figures/gdelt_weekly.png (builds the panel if missing)
 python scripts/news_correlation.py   # news vs starts_7d / share_7d on training rows
 python scripts/evaluate_news.py      # 2026 model with and without news -> results/news/
 python scripts/check_no_peeking_news.py  # leakage check for the news columns
@@ -394,9 +441,10 @@ src/features.py      model features (all known at t)
 src/logit.py         plain logistic regression (Newton / IRLS), the comparison model
 src/baselines.py     the three baselines
 src/metrics.py       Brier (+ decomposition), AUC, precision/recall/F1, max-F1 threshold
-src/news.py          national GDELT news features (branch news)
+src/news.py          national GDELT news features (the news experiment)
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features
-data/news/           GDELT hourly aggregate + pull record (branch news)
+data/news/           GDELT hourly aggregate + pull record (the news experiment)
+models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
 scripts/             one script per step, run from the repo root
 results/             evaluation tables
 figures/             plots and the tables behind them

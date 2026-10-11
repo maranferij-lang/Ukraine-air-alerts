@@ -1059,3 +1059,227 @@ The user asked for this one commit on `main`: README only, no code changes.
   per-region GDELT file from the experiment: git-ignored on `news`, but not on `main`.
 - I moved it out of the working tree rather than touch `.gitignore` on `main`, because this round is README only.
   `scripts/fetch_gdelt_events.py` on `news` regenerates it.
+
+---
+
+## 2026-10-10 — Round 8 (main): usability (quick start fixes, quiet evaluate, predict.py, logit warnings)
+
+A usability round, not a model round. Everything tracked in `results/` and `figures/` is byte-identical to round 7.
+The user's input came from running the quick start on their Mac: Python 3.9 from Xcode, numpy 2.0.2, pandas 2.3.3,
+lightgbm 4.6.0, arm64.
+
+### Before the round: main had changed
+- The user merged `news` into main through PR #2 (53f50d0), then updated the Status line (7216588). They confirmed
+  the merge was on purpose: one place to read is simpler for a reviewer.
+- So `main` now carries the news experiment in full: `results/news/`, `figures/gdelt_weekly.png`, `data/news/`,
+  the news scripts and the long README section.
+- Two things on main were therefore out of date, and both were fixed this round (see "README" below):
+  - the README still said "branch `news` only, not merged";
+  - the round-7 quick start claimed that two commands reproduce all of `results/` and `figures/`.
+
+### 1. The logit warnings: the user's sigmoid guess was wrong
+- **Report:** on macOS, `src/logit.py` printed "divide by zero / overflow / invalid value encountered in matmul" at
+  lines 22, 23, 24 and 33, for every H. The results were identical to ours (0.688 / 0.087 at H=1, logistic coef
+  0.035).
+- **The user guessed the sigmoid was overflowing on large negative logits. The user was wrong**, and said so after
+  seeing the evidence:
+  - All four lines are matrix products, and lines 23 and 24 contain no `exp` at all.
+  - A sigmoid overflow would be reported as "overflow encountered in exp".
+  - The logits on train and test rows range from −4.74 to 4.45 at most (H=1: −4.74..0.52, H=3: −3.70..2.54,
+    H=6: −2.89..4.45). `exp` overflows only beyond about 709.
+  - The same code prints no warnings on Linux under Python 3.11, 3.12 and 3.13.
+- **Diagnosis:** numpy's Accelerate BLAS on Apple silicon can leave stray floating-point flags after a correct
+  matrix product. numpy then reports them as warnings. The numpy 2.3.1 release notes list a fix for Accelerate
+  runtime warnings, but that needs Python 3.11 or newer, and the user is on 3.9.
+- **Agreed fix:** `src/logit.py` routes its four matrix products through `_matmul`:
+  - a narrow `np.errstate` around the product only;
+  - an immediate `FloatingPointError` if the product contains inf or NaN, so a real numerical problem still stops
+    the run;
+  - the sigmoid's `exp` stays outside the guard, so a real overflow there would still warn.
+- The arithmetic is unchanged and the results are byte-identical. I can't reproduce the macOS warnings here, so
+  whether they are gone on the user's Mac is confirmed by the user, not by me.
+
+### 2. `evaluate.py`: quiet by default
+- **Default output:**
+  - one progress line per step, with elapsed seconds: rows, features, and one line per H with tree counts and row
+    counts;
+  - one "wrote …" line per file in `results/` and `figures/`, plus one line for `models/`;
+  - a short summary: target (b), within-oblast AUC / Brier, LightGBM next to the train-frequency baseline, on all
+    24 days and on Sep 4–5 separately. It points to `results/test_table.md` for all three baselines, like the
+    README brief block.
+- `--verbose` also prints every table, as before.
+- **New output, `models/`** (git-ignored; written for `predict.py`):
+  - the three full-history LightGBM test fits, one per H (`lgbm_b_start_h{H}.txt`);
+  - the train-frequency tables for target (b) (`frequency_b_start_h{H}.csv`);
+  - `info.json`, with the data range, the start of the test window, the feature list and the tree counts.
+- `evaluate_news.py` now behaves the same way and runs the whole news chain, so one optional quick-start line
+  rebuilds every tracked news output:
+  - `news_correlation.py`;
+  - the comparison itself;
+  - `check_no_peeking_news.py`, which now writes `results/news/no_peeking.txt` itself (it used to be captured
+    with `tee`);
+  - the weekly plot from `check_gdelt_events.py`, which builds the official hourly panel if
+    `data/processed/` lacks it, exactly as `build_panel.py` would. That panel is the only reason
+    `gdelt_weekly.png` needed `build_panel.py` first.
+  - The note inside `results/news/test_table.md` still says "News experiment (branch news)". It stays, because
+    `results/` must stay byte-identical.
+
+### 3. `scripts/predict.py`
+- **What it does:** `--at <hour> --oblast <name>`, or `--all`, prints for H = 1, 3, 6:
+  - the model's probability of a new alert in (t, t+H];
+  - next to it the three baselines (same as now, same hour yesterday, train frequency), because `CLAUDE.md` puts
+    every model number next to them;
+  - what actually happened;
+  - for one oblast, also the time of the next new alert.
+- **Inputs:** recomputed from `known_at(official, t)`: rows that had started by t, with any end after t unknown.
+  This is the truncation `check_no_peeking.py` validates. "Happened" comes from the full data. It is "n/a" after
+  the end of the data, or when (t, t+H] touches the outage.
+- **Times:** UTC by default; an offset such as `+03:00` is accepted; times are rounded down to the hour.
+  - Parsing is strict ISO, so "05.09.2026" is rejected instead of being read as 9 May.
+  - An empty input gets the "Cannot read --at" message.
+  - Allowed range: 2022-03-16 00:00 → 2026-09-05 23:00 UTC.
+- **Status line:**
+  - Every hour before 2026-08-07 00:00 is marked "TRAINING PERIOD … not forecasts" (see the review below).
+  - After the end of training, it says whether the hour is a test row for every H, for some H (naming them), or
+    for none.
+  - Separate notes cover an hour inside the outage, a last 24 hours that overlap it, a 7-day lookback that
+    overlaps it ("as on Sep 4–5"), and the first 7 days of data.
+- **Oblast names:**
+  - a name without "oblast", in any case, or a unique start of one;
+  - "Kyiv" alone is rejected as ambiguous (Kyiv City or Kyivska), and an empty name is rejected;
+  - Luhansk gets its own message: excluded, permanent alert.
+- **Missing models:** it says "Run `python scripts/evaluate.py` first". If `models/` comes from another data
+  snapshot or another feature list, it asks for a re-run.
+- **Verified** (scratch script, not committed):
+  - the saved models reproduce the test-table numbers for every H;
+  - at H=1, the saved model's test predictions are identical to a fresh deterministic refit;
+  - `predict.forecast()` at 76 origins, compared with the full-data pipeline of `evaluate.py`:
+    - origins: 40 test hours (the `check_no_peeking.py` sample), 20 training hours, and 16 edge hours (the
+      outage, Sep 3, the hours just before the end of training, the first month of data, the end of the data);
+    - 1,824 oblast rows × 3 H;
+    - **0 mismatches** in probabilities (exact equality), "now", same hour yesterday, train frequency and
+      "happened";
+    - n/a appears only where the window passes the end of the data or touches the outage.
+- **Bug found by this check, fixed in `src/features.py`:**
+  - On truncated data, an oblast with no alert in the last 32 days has no episodes. `_own` and
+    `_neighbour_inputs` then indexed an empty array (IndexError at a training hour).
+  - The full-data pipeline never meets an empty oblast, so no result changed.
+  - The fix: `_at(a, i)` returns `a[i]` unchanged when the array is not empty.
+  - `check_no_peeking.py` still passes, and `results/` is byte-identical.
+- **Also fixed during CLI testing:**
+  - a name left over from the refactor crashed the next-alert line;
+  - `predict.py … | head` now exits quietly instead of raising a BrokenPipeError.
+
+### 4. README
+- **Quick start:**
+  - a Windows activate line;
+  - `brew install libomp` for macOS (without it, `import lightgbm` crashes, as the user found);
+  - an optional `evaluate_news.py` line with its time;
+  - `evaluate.py` now also writes `models/`;
+  - the data line covers both snapshots, and says `fetch_data.py` / `fetch_gdelt_events.py` only re-pull and need
+    network;
+  - Python 3.9 is listed from the user's macOS run (every number matched), next to my own fresh-clone tests below.
+- **Usage section (new):**
+  - `predict.py` examples (one oblast in UTC, the same hour in Kyiv time, `--all`) and what the output contains;
+  - the `--verbose` flags of `evaluate.py` and `evaluate_news.py`.
+  - No example output: its probabilities are not copied from `results/`.
+- **News wording:**
+  - the Status line now reads rounds 1–8, with the news experiment merged as a documented negative result;
+  - the "Branch `news`" line became a "News experiment" line;
+  - the section heading, the verdict bullet and the Run order / Layout comments no longer say "branch only" or
+    "not merged";
+  - the first sentence of the section now says the main model uses no text.
+- **Run order:** gained the `predict.py` line, and a note that `evaluate_news.py` runs the news steps.
+
+### Review
+- **Setup:** a review workflow with four independent read-only reviewers, one lens each:
+  - leakage and correctness of `predict.py`;
+  - unchanged computations, plus Python 3.9 / pandas 2 compatibility;
+  - README and log against `CLAUDE.md`;
+  - a hostile command-line user.
+- Each reviewer's findings then went to a separate skeptic who tried to refute them.
+- **Confirmed and fixed:**
+  - **The first month of data gave the wrong model numbers in `predict.py`.** Its feature grid reached back before
+    2022-03-16, so `freq4w` counted pre-data hours as "no alert" instead of skipping them. Model probabilities
+    were off by up to 0.19 at origins from 2022-03-16 to 04-12, all of them training hours. The grid now starts no
+    earlier than the data. Those hours are in the 76-origin check above, with 0 mismatches.
+  - **"PARTLY TRAINING" was misleading.** For the hours just before the cutoff, it implied the other horizons were
+    clean forecasts, but the training labels of neighbouring rows already covered their outcome. The first week
+    of data was not marked as training at all. Every hour before 2026-08-07 is now TRAINING PERIOD, which is what
+    the README says.
+  - **"Outside the 24-day test window" was printed for hours whose H=1 (and H=3) rows are scored test rows**
+    (Aug 28 and Sep 5, 19:00–23:00). Test membership is now reported per H.
+  - **Sep 3 hours were told their inputs were "as on Sep 4–5".** In fact their 6h/24h windows sit in the outage,
+    and `hours_since_end` can point inside it. They now get their own warning.
+  - **Wrong outage wording.** The outage was printed with an exclusive end ("..2026-09-03"), and the message said
+    "no alert data" although the feed has rows on Aug 29 before 05:00. It now reads "2026-08-29..09-02, masked …
+    missing or incomplete".
+  - **Bad input crashed or was silently misread.** `--oblast ""` silently printed Cherkaska oblast. `--at ""`
+    crashed with a traceback. Day-first dates were read month-first.
+  - **The `evaluate.py` summary showed Sep 4–5 against the frequency baseline only, but same hour yesterday has the
+    higher within-oblast AUC than LightGBM there at every H.** The summary keeps the layout the user asked for and
+    adds a computed note wherever any baseline beats the model on AUC. `evaluate_news.py` gets the same note. The
+    pointers now name the by-period tables too.
+  - **`requirements.txt` allowed pandas 2.0, but `md_table` uses `DataFrame.map` (pandas 2.1+).** This was older
+    than round 8: `evaluate.py` would crash after fitting. The floor is now `pandas>=2.1`, which the reviewer
+    checked to be byte-identical on 2.1.4.
+- **Found by my own Python 3.9 / pandas 2.3.3 run:** `news_correlation.py`'s `groupby().apply()` printed a
+  FutureWarning per correlation. Selecting the two columns first removes it; `correlation.md` is identical on
+  pandas 2.3.3 and on 3.
+- **Refuted or left as is:**
+  - **Windows.** The quick start is a bash block: `&&` fails in PowerShell 5.1, and `#` is not a comment in cmd.
+    The skeptic called this presentation, not a bug, but a one-line Windows note was added anyway.
+  - **"happened" shows n/a for longer H even when a shorter H already says yes.** Refuted: n/a marks windows the
+    evaluation also leaves unscored. A legend line now explains it.
+- **Left as is, needs the user (the requests conflict):** `results/news/test_table.md` line 1 still says
+  "News experiment (branch news)" and "reproduces results/test_table.csv on main". Removing it would change a file
+  in `results/`, and the round requires `results/` to stay byte-identical. That requirement wins until the user
+  decides.
+- **Not changed, raised with the user:** the README brief block's "Sep 4–5 alone" line has the same blind spot as
+  the old summary (frequency only, while same hour yesterday has the higher AUC there). The user approved that
+  block as is in round 5.
+
+### Accident during this round (repaired, nothing pushed)
+- I appended this log entry with an unquoted shell heredoc, so bash ran the backtick-quoted names in the text as
+  commands.
+- Almost all of them failed harmlessly with "command not found". But `pandas>=2.1` created an empty file named
+  `=2.1` in the repo root, and an outdated draft of this entry was appended.
+- Both went into a local commit that was never pushed.
+- I checked the rest of the filesystem for files changed in that minute: only caches had changed. I then deleted
+  the stray file, restored `PROCESS_LOG.md` to its pre-round state, re-applied the entry with a quoted heredoc,
+  and amended the local commit.
+
+### Fresh-clone tests
+- **Setup:** I committed locally, then for each Python version made a `git clone` of that commit into a new
+  scratch folder, created a new venv and ran `pip install -r requirements.txt`. Then, in order:
+  - `predict.py` before any model exists: exit 1, with "run evaluate.py first";
+  - `plot_weekly.py`, `evaluate.py`, `evaluate_news.py`, `check_no_peeking.py`;
+  - `predict.py` for one oblast, `--all`, and a training hour;
+  - then `git status`.
+- The four runs were sequential on an otherwise idle 4-core container. Times in seconds:
+
+  | step | 3.9.25 | 3.11.17 | 3.12.3 | 3.13.16 |
+  |---|---|---|---|---|
+  | pip install | 22 | 27 | 31 | 21 |
+  | `plot_weekly.py` | 9 | 8 | 11 | 11 |
+  | `evaluate.py` | 80 | 82 | 82 | 80 |
+  | `evaluate_news.py` (incl. building the panel) | 111 | 106 | 112 | 110 |
+  | `check_no_peeking.py` | 22 | 23 | 25 | 25 |
+  | `predict.py` (each call) | 4–5 | 4–5 | 4–5 | 4–5 |
+
+- **Packages installed:**
+  - Python 3.9: pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0 (the user's Mac stack, apart from
+    matplotlib);
+  - Python 3.11–3.13: pandas 3.0.6, numpy 2.4.6 / 2.5.4, matplotlib 3.11.2, lightgbm 4.7.0.
+- **Result:**
+  - Every step exited 0, and every leakage-check assert passed.
+  - No step printed a warning: 0 lines matching "warning" in any output, so the quiet output is clean on
+    pandas 2 and 3.
+  - All 21 tracked files in `results/` and `figures/`, including `results/news/` and `gdelt_weekly.png`, were
+    rewritten after the clone.
+  - **Python 3.11, 3.12, 3.13:** `git status` empty, so all 21 are byte-identical.
+  - **Python 3.9:** all 16 files in `results/` and `alerts_per_week.csv` are byte-identical. The four PNGs differ:
+    matplotlib 3.9.4 lays out the tight bounding box a few pixels differently (for example 1021×1530 vs
+    1026×1530). The tables they are drawn from are identical.
+- The README quick start now lists `evaluate_news.py` at ~2 min, and the tested versions as above.
+- The `requirements.txt` comment says the same.

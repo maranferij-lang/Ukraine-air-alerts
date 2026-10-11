@@ -2,6 +2,8 @@
 
     python scripts/check_gdelt_events.py
 
+Needs the official hourly panel (data/processed/panel_official_min0.5.csv.gz); builds it with
+scripts/build_panel.py's defaults if it is missing.
 1. gaps: hours with fewer than 4 of their 15-minute files, and hours with all files but no events
 2. heavy days: days with the most oblasts under alert at the same time (official panel); do the
    GDELT counts rise on those days or the day after?
@@ -22,22 +24,38 @@ import pandas as pd
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 
-def main():
+def _quiet(fn, *args):
+    """fn(*args) with its printed output dropped."""
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        return fn(*args)
+
+
+def main(verbose=True):
+    print_ = print if verbose else (lambda *a, **k: None)
     g = pd.read_csv(ROOT / "data" / "news" / "gdelt_events_ukraine_hourly.csv", parse_dates=["hour"])
-    panel = pd.read_csv(ROOT / "data" / "processed" / "panel_official_min0.5.csv.gz", parse_dates=["hour"])
+    panel_csv = ROOT / "data" / "processed" / "panel_official_min0.5.csv.gz"
+    if not panel_csv.exists():  # same file as `python scripts/build_panel.py`
+        from scripts.build_panel import build
+        panel_csv.parent.mkdir(parents=True, exist_ok=True)
+        build_panel = build("official", 0.5) if verbose else _quiet(build, "official", 0.5)
+        build_panel.to_csv(panel_csv, index=False)
+        print(f"wrote {panel_csv.relative_to(ROOT)} (official hourly panel, needed for the weekly plot)", flush=True)
+    panel = pd.read_csv(panel_csv, parse_dates=["hour"])
     panel = panel[(panel["hour"] >= g["hour"].min()) & (panel["hour"] <= g["hour"].max())]
 
-    print("=== 1. gaps")
-    print(f"hours: {len(g)}; complete (4 files): {(g['files'] == 4).sum()}; partial: {((g['files'] > 0) & (g['files'] < 4)).sum()}; "
+    print_("=== 1. gaps")
+    print_(f"hours: {len(g)}; complete (4 files): {(g['files'] == 4).sum()}; partial: {((g['files'] > 0) & (g['files'] < 4)).sum()}; "
           f"no file at all: {(g['files'] == 0).sum()}")
     gap = g["files"] < 4
     runs = (gap != gap.shift()).cumsum()[gap]
     for _, r in g[gap].groupby(runs):
-        print(f"   {r['hour'].min():%Y-%m-%d %H:00} .. {r['hour'].max():%Y-%m-%d %H:00} UTC: {len(r)} h, files {r['files'].tolist()[:8]}")
+        print_(f"   {r['hour'].min():%Y-%m-%d %H:00} .. {r['hour'].max():%Y-%m-%d %H:00} UTC: {len(r)} h, files {r['files'].tolist()[:8]}")
     silent = g[(g["files"] == 4) & (g["events_all"] == 0)]
-    print(f"complete hours with zero Ukraine events: {len(silent)}")
+    print_(f"complete hours with zero Ukraine events: {len(silent)}")
 
-    print("\n=== 2. heavy days (official alerts) vs GDELT")
+    print_("\n=== 2. heavy days (official alerts) vs GDELT")
     ok = panel[panel["data_ok"]]
     per_hour = ok.groupby("hour")["active"].sum()                      # oblasts under alert in the hour
     heavy = per_hour.groupby(per_hour.index.floor("D")).max().rename("max_oblasts_under_alert")
@@ -50,15 +68,15 @@ def main():
         d[f"{col}_next_day"] = d[col].shift(-1)
     top = d.sort_values(["max_oblasts_under_alert", "alert_starts"], ascending=False).head(10)
     med = d[["events_conflict", "events_aerial"]].median()
-    print(f"median day: conflict {med['events_conflict']:.0f}, aerial {med['events_aerial']:.0f}")
-    print(top[["max_oblasts_under_alert", "alert_starts", "events_conflict", "events_conflict_next_day",
+    print_(f"median day: conflict {med['events_conflict']:.0f}, aerial {med['events_aerial']:.0f}")
+    print_(top[["max_oblasts_under_alert", "alert_starts", "events_conflict", "events_conflict_next_day",
                "events_aerial", "events_aerial_next_day"]].to_string())
     for col in ["events_conflict", "events_aerial"]:
         same = d[col].corr(d["alert_starts"], method="spearman")
         nxt = d[f"{col}_next_day"].corr(d["alert_starts"], method="spearman")
-        print(f"Spearman, daily {col} vs official alert starts: same day {same:.2f}, GDELT next day {nxt:.2f}")
+        print_(f"Spearman, daily {col} vs official alert starts: same day {same:.2f}, GDELT next day {nxt:.2f}")
 
-    print("\n=== 3. weekly plot")
+    print_("\n=== 3. weekly plot")
     week = lambda s: s.resample("W-MON", label="left", closed="left").sum()
     gi = g.set_index("hour")
     gw = week(gi[["events_conflict", "events_aerial", "files"]].assign(hours=1))
@@ -91,7 +109,7 @@ def main():
     fig.text(0.01, 0.005, note + "Official series excludes the 2026-08-29..09-02 outage hours.", fontsize=8, color=INK2)
     out = ROOT / "figures" / "gdelt_weekly.png"
     fig.savefig(out, dpi=130, bbox_inches="tight", facecolor=SURFACE)
-    print(f"wrote {out.relative_to(ROOT)}; weeks with missing GDELT files: {[f'{w:%Y-%m-%d}' for w in gaps_w]}")
+    print(f"wrote {out.relative_to(ROOT)}; weeks with missing GDELT files: {[f'{w:%Y-%m-%d}' for w in gaps_w]}", flush=True)
 
 
 if __name__ == "__main__":

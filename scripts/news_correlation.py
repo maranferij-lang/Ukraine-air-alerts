@@ -26,7 +26,7 @@ from src.news import NEWS_FEATURES, load_news, news_features
 ALERT = ["starts_7d", "share_7d", "starts_24h"]
 
 
-def main():
+def main(verbose=True):
     rows, episodes, raw, first, end = build_rows()
     test_start = end - pd.Timedelta(days=TEST_DAYS)
     oblasts = sorted(rows["oblast"].unique())
@@ -44,7 +44,7 @@ def main():
             r = {"news feature": news, "alert feature": a}
             for method in ["pearson", "spearman"]:
                 r[f"pooled {method}"] = d[news].corr(d[a], method=method)
-                r[f"within oblast {method}"] = d.groupby("oblast", observed=True).apply(
+                r[f"within oblast {method}"] = d.groupby("oblast", observed=True)[[news, a]].apply(
                     lambda g: g[news].corr(g[a], method=method)).mean()
                 r[f"national {method}"] = nat[news].corr(nat[a], method=method)
             out.append(r)
@@ -56,9 +56,11 @@ def main():
             "within oblast = per-oblast correlation averaged over 24 oblasts; national = per hour, starts summed "
             "and share averaged over oblasts.\n\n")
     (ROOT / "results" / "news" / "correlation.md").write_text(note + md_table(out) + "\n")
-    print(note)
-    with pd.option_context("display.width", 250, "display.max_columns", 20):
-        print(out.round(3).to_string(index=False))
+    print("wrote results/news/correlation.md", flush=True)
+    if verbose:
+        print(note)
+        with pd.option_context("display.width", 250, "display.max_columns", 20):
+            print(out.round(3).to_string(index=False))
 
 
 if __name__ == "__main__":

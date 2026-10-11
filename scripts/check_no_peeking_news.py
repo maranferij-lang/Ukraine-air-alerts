@@ -8,6 +8,8 @@ Negative control: the 24h window ending at t instead of t-1h (one hour too late)
 the kept buckets vs on the full data. It must disagree wherever the hour [t-1h, t) had events.
 
     python scripts/check_no_peeking_news.py
+
+Prints the result and writes the same lines to results/news/no_peeking.txt.
 """
 import sys
 from pathlib import Path
@@ -28,7 +30,7 @@ def direct(kept, lo, hi):
     return float(s[(s.index >= lo) & (s.index < hi)].sum())
 
 
-def main():
+def main(verbose=True):
     rows, _, _, first, end = build_rows()
     test_start = end - pd.Timedelta(days=TEST_DAYS)
     hourly = load_news()
@@ -53,14 +55,22 @@ def main():
         ctrl += int(direct(kept, t - pd.Timedelta(hours=24), t) != direct(hourly, t - pd.Timedelta(hours=24), t))
         ctrl_possible += int(hourly.loc[cutoff, "events_conflict"] > 0)
     n = N_ORIGINS * len(NEWS_FEATURES)
-    print(f"origins: {N_ORIGINS} from {origins.min()} to {origins.max()} (same as check_no_peeking.py)")
-    print(f"news columns from GDELT records added before t-1h, src/news.py: {n} values, mismatches {mism}")
-    print(f"news columns from GDELT records added before t-1h, direct sum: {n} values, mismatches {mism_direct}")
-    print(f"news columns identical across oblasts at every t: yes ({len(per_t)} hours)")
-    print(f"negative control, 24h window ending at t: {ctrl} mismatches of {N_ORIGINS} origins "
-          f"({ctrl_possible} origins had events in [t-1h, t))")
+    lines = [
+        f"origins: {N_ORIGINS} from {origins.min()} to {origins.max()} (same as check_no_peeking.py)",
+        f"news columns from GDELT records added before t-1h, src/news.py: {n} values, mismatches {mism}",
+        f"news columns from GDELT records added before t-1h, direct sum: {n} values, mismatches {mism_direct}",
+        f"news columns identical across oblasts at every t: yes ({len(per_t)} hours)",
+        f"negative control, 24h window ending at t: {ctrl} mismatches of {N_ORIGINS} origins "
+        f"({ctrl_possible} origins had events in [t-1h, t))",
+    ]
+    if verbose:
+        print("\n".join(lines))
     assert mism == 0 and mism_direct == 0
     assert ctrl > 0 and ctrl == ctrl_possible
+    out = ROOT / "results" / "news" / "no_peeking.txt"
+    out.write_text("\n".join(lines) + "\n")
+    print(f"wrote {out.relative_to(ROOT)} (news leakage check: {mism + mism_direct} mismatches, negative control "
+          f"fired at {ctrl} of {N_ORIGINS} origins)", flush=True)
 
 
 if __name__ == "__main__":

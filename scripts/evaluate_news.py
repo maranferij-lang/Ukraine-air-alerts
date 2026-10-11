@@ -1,6 +1,12 @@
 """News experiment: "LightGBM from 2026-01-01" with and without the two national GDELT columns.
 
-    python scripts/evaluate_news.py
+    python scripts/evaluate_news.py              # progress, files written, short summary
+    python scripts/evaluate_news.py --verbose    # also print every table
+
+Runs the whole news chain from the committed hourly GDELT counts (data/news/), no network needed:
+scripts/news_correlation.py, this comparison, scripts/check_no_peeking_news.py and the weekly plot of
+scripts/check_gdelt_events.py (which builds the official hourly panel first if it is missing). Together
+they rewrite every tracked file in results/news/ and figures/gdelt_weekly.png.
 
 Same rows, split, training rows, protocol and thresholds as scripts/evaluate.py (main). The only
 difference between the two 2026 models is the two extra columns news_24h and news_yesterday
@@ -13,7 +19,9 @@ minus without" in within-oblast AUC and Brier, the number of trees each fit stop
 feature importance of the news model.
 Writes results/news/*.md|csv.
 """
+import argparse
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +30,8 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from scripts.evaluate import (PERIODS, POST_SWITCH_START, TARGETS, check_state_features_outside_outages,
+from scripts import check_gdelt_events, check_no_peeking_news, news_correlation
+from scripts.evaluate import (PERIODS, baseline_notes, POST_SWITCH_START, TARGETS, check_state_features_outside_outages,
                               fit_predict, md_table, per_oblast_auc)
 from src.baselines import frequency_table, same_hour_yesterday, train_frequency
 from src.dataset import EVAL_LOOKBACK, HORIZONS, TEST_DAYS, build_rows, split
@@ -37,6 +46,33 @@ PREDICTORS = {"lgbm": "LightGBM full history (main, no news)", "lgbm_2026": "Lig
               "yesterday": "same hour yesterday", "frequency": "train freq oblast x hour x weekday"}
 N_BOOT = 1000
 OUT = ROOT / "results" / "news"
+T0 = time.time()
+
+
+def say(msg):
+    print(f"{msg} [{time.time() - T0:.0f}s]", flush=True)
+
+
+def wrote(path):
+    print(f"wrote {path.relative_to(ROOT)}", flush=True)
+
+
+def summary(res):
+    """Target (b), within-oblast AUC / Brier: the 2026 model with and without news, next to the
+    train-frequency baseline; all 24 test days and Sep 4-5 alone."""
+    b = res[res["target"] == "b_start"].set_index(["H", "predictor", "period"])
+    cell = lambda H, name, period: (f"{b.loc[(H, name, period), 'auc_within_oblast']:.3f} / "
+                                    f"{b.loc[(H, name, period), 'brier']:.3f}")
+    lines = ["", "Summary. Target (b) new alert starts in (t, t+H]; within-oblast AUC / Brier: LightGBM from",
+             "2026-01-01 with news | without news | train-frequency baseline. All three baselines and the",
+             "full-history model: results/news/test_table.md and results/news/test_table_by_period.md."]
+    for period, title in [("all", "all 24 test days"), ("sep", "Sep 4-5 only (7-day features scaled)")]:
+        lines.append(f"{title}:")
+        for H in HORIZONS:
+            lines.append(f"  H={H}  {cell(H, 'lgbm_2026_news', period)} | {cell(H, 'lgbm_2026', period)} | "
+                         f"{cell(H, 'frequency', period)}")
+    lines += baseline_notes(res, ["lgbm_2026_news", "lgbm_2026"], {"all": "on all 24 test days", "sep": "on Sep 4-5"})
+    print("\n".join(lines))
 
 
 def day_bootstrap(y, s_with, s_without, oblast, day, n=N_BOOT, seed=0):
@@ -65,6 +101,13 @@ def day_bootstrap(y, s_with, s_without, oblast, day, n=N_BOOT, seed=0):
 
 
 def main():
+    ap = argparse.ArgumentParser(description="News experiment: LightGBM from 2026-01-01 with and without the "
+                                             "GDELT news columns; rewrites results/news/ and figures/gdelt_weekly.png.")
+    ap.add_argument("--verbose", action="store_true", help="also print every table")
+    args = ap.parse_args()
+
+    news_correlation.main(verbose=args.verbose)
+    say("correlation of the news columns with the alert history done")
     rows, episodes, raw, first, end = build_rows()
     test_start = end - pd.Timedelta(days=TEST_DAYS)
     oblasts = sorted(rows["oblast"].unique())
@@ -93,9 +136,12 @@ def main():
         fitted["lgbm_2026_news"], trees["lgbm_2026_news"], final = fit_predict(Xn, yb, m26)
         tree_counts.append({"H": H, **{PREDICTORS[k]: v for k, v in trees.items()}})
         nan_train = int(Xn.loc[m26["train"], NEWS_FEATURES].isna().any(axis=1).sum())
-        print(f"H={H}: trees {trees}; train rows from 2026 {m26['train'].sum()} ({nan_train} without a full news "
-              f"window, NaN), last week {m['last_week'].sum()}, test {test.sum()} = Aug {periods['aug'].sum()} "
-              f"+ Sep 4-5 {periods['sep'].sum()}", flush=True)
+        say(f"H={H}: fitted LightGBM full history ({trees['lgbm']} trees), from 2026-01-01 ({trees['lgbm_2026']}), "
+            f"from 2026-01-01 + news ({trees['lgbm_2026_news']})")
+        if args.verbose:
+            print(f"     train rows from 2026 {m26['train'].sum()} ({nan_train} without a full news window, NaN), "
+                  f"last week {m['last_week'].sum()}, test {test.sum()} = Aug {periods['aug'].sum()} "
+                  f"+ Sep 4-5 {periods['sep'].sum()}", flush=True)
 
         for target in ["b_start", "a_active"]:
             col = f"{target}_{H}"
@@ -133,6 +179,7 @@ def main():
     res = res.sort_values(["target", "H"], ascending=[False, True], kind="stable").reset_index(drop=True)
     OUT.mkdir(parents=True, exist_ok=True)
     res.to_csv(OUT / "test_table.csv", index=False, float_format="%.4f")
+    wrote(OUT / "test_table.csv")
 
     # every row shared with main must reproduce main's numbers
     main = pd.read_csv(ROOT / "results" / "test_table.csv")
@@ -142,7 +189,8 @@ def main():
     both = ours.merge(main, on=key, suffixes=("", "_main"))
     assert len(both) == len(ours[ours["predictor"] != "lgbm_2026_news"]), "rows missing from main's table"
     diff = sum(int((both[c] != both[f"{c}_main"]).sum()) for c in num)
-    print(f"rows shared with main: {len(both)}, values compared: {len(both) * len(num)}, differences: {diff}")
+    print(f"check: the {len(both)} rows shared with results/test_table.csv match it "
+          f"({len(both) * len(num)} values, {diff} differences)", flush=True)
     assert diff == 0
 
     labels = dict(target=lambda d: d["target"].map(TARGETS), predictor=lambda d: d["predictor"].map(PREDICTORS),
@@ -157,6 +205,7 @@ def main():
             "= mean of per-oblast AUCs (main number). Thresholds: max F1 on the last train week; 0/1 baselines as is. "
             "By period: test_table_by_period.md.\n\n")
     (OUT / "test_table.md").write_text(note + md_table(main_tab) + "\n")
+    wrote(OUT / "test_table.md")
     by_period = res.assign(**labels)[["target", "H", "predictor", "period", "n_test", "base_rate",
                                       "auc_within_oblast", "n_oblasts_auc", "brier", "precision", "recall", "f1"]]
     (OUT / "test_table_by_period.md").write_text(
@@ -164,6 +213,7 @@ def main():
         "the 7-day alert features are computed over the observed part of their window; the news features have "
         "no gap there. Sep 4-5 is 48 origins per oblast: within-oblast AUC there is very noisy.\n\n"
         + md_table(by_period) + "\n")
+    wrote(OUT / "test_table_by_period.md")
 
     imp = pd.DataFrame({h: [f"{name} ({100 * v:.1f}%)" for name, v in s.items()] for h, s in importance.items()})
     imp.insert(0, "rank", range(1, len(imp) + 1))
@@ -173,6 +223,7 @@ def main():
     (OUT / "feature_importance.md").write_text(
         f"LightGBM from 2026-01-01 + news, test fit, all {len(FEATURES) + len(NEWS_FEATURES)} features by share of "
         "total gain, per H.\n\n" + md_table(imp) + "\n\nThe two news features:\n\n" + md_table(news_imp) + "\n")
+    wrote(OUT / "feature_importance.md")
     wins = pd.DataFrame(wins)
     boot = pd.DataFrame(boot)
     (OUT / "news_vs_no_news.md").write_text(
@@ -184,7 +235,14 @@ def main():
         + md_table(boot, "{:.4f}") + "\n\n"
         "Number of trees chosen by early stopping on the last train week (validation fit, 100 rounds patience); "
         "the test fit uses the same number:\n\n" + md_table(pd.DataFrame(tree_counts)) + "\n")
+    wrote(OUT / "news_vs_no_news.md")
 
+    check_no_peeking_news.main(verbose=args.verbose)
+    check_gdelt_events.main(verbose=args.verbose)
+    summary(res)
+    if not args.verbose:
+        return
+    print()
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_rows", 200):
         print(main_tab.drop(columns=["n_oblasts_auc", "target"]).assign(t=res.loc[main_tab.index, "target"])
               .round(3).to_string(index=False))

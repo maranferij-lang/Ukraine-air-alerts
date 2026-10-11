@@ -46,23 +46,30 @@ def _ns(a):
     return a.astype("datetime64[ns]").astype(np.int64)
 
 
+def _at(a, i):
+    """a[i] for an index array i that callers mask where i < 0. An oblast with no known episode
+    gives empty arrays (only on truncated data, e.g. scripts/predict.py); every index is masked
+    then, so any value will do."""
+    return a[i] if len(a) else np.zeros(np.shape(i), dtype=a.dtype)
+
+
 def _own(starts, ends, joined_starts, t):
     """Own-oblast features for one oblast; all inputs int64 ns, t sorted or not."""
     out = {}
     k = np.searchsorted(starts, t, side="right") - 1          # last raw start <= t
     kk = np.maximum(k, 0)
-    running = (k >= 0) & (ends[kk] > t)
+    running = (k >= 0) & (_at(ends, kk) > t)
     out["now"] = running.astype(float)
-    out["hours_since_start"] = np.where(running, (t - starts[kk]) / NS_PER_HOUR, 0.0)
+    out["hours_since_start"] = np.where(running, (t - _at(starts, kk)) / NS_PER_HOUR, 0.0)
     j = np.searchsorted(ends, t, side="right") - 1            # last raw end <= t
-    since_end = np.where(j >= 0, (t - ends[np.maximum(j, 0)]) / NS_PER_HOUR, np.inf)
+    since_end = np.where(j >= 0, (t - _at(ends, np.maximum(j, 0))) / NS_PER_HOUR, np.inf)
     out["hours_since_end"] = np.minimum(since_end, HOURS_SINCE_CAP)
 
     cum = np.concatenate([[0], np.cumsum(ends - starts)])   # covered time before episode i
     def covered_until(x):
         i = np.searchsorted(starts, x, side="right") - 1
         ii = np.maximum(i, 0)
-        partial = np.where(i >= 0, np.minimum(x, ends[ii]) - starts[ii], 0)
+        partial = np.where(i >= 0, np.minimum(x, _at(ends, ii)) - _at(starts, ii), 0)
         return cum[ii] * (i >= 0) + partial
     def n_starts(lo, hi):  # joined starts in (lo, hi]
         return (np.searchsorted(joined_starts, hi, side="right")
@@ -89,7 +96,7 @@ def _own(starts, ends, joined_starts, t):
 
 def _neighbour_inputs(starts, ends, joined_starts, t):
     k = np.searchsorted(starts, t, side="left") - 1           # last raw start < t
-    alert_last_hour = (k >= 0) & (ends[np.maximum(k, 0)] > t - NS_PER_HOUR)
+    alert_last_hour = (k >= 0) & (_at(ends, np.maximum(k, 0)) > t - NS_PER_HOUR)
     starts_6h = (np.searchsorted(joined_starts, t, side="left")
                  - np.searchsorted(joined_starts, t - 6 * NS_PER_HOUR, side="left"))
     return alert_last_hour.astype(float), starts_6h.astype(float)

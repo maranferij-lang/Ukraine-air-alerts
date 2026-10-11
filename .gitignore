@@ -8,3 +8,6 @@ venv/
 
 # GDELT per-region hourly counts: written by scripts/fetch_gdelt_events.py, not used (oblast split dropped)
 data/news/gdelt_conflict_adm1_hourly.csv
+
+# fitted by scripts/evaluate.py for scripts/predict.py
+models/

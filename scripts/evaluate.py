@@ -1,6 +1,7 @@
 """LightGBM for target (b) next to a logistic regression and the three baselines, on the same rows.
 
-    python scripts/evaluate.py
+    python scripts/evaluate.py              # progress, files written, short summary
+    python scripts/evaluate.py --verbose    # also print every table (they are all in results/)
 
 Rows: test = last 30 full days of official data, minus rows whose [t-24h, t+H] touches a known
 outage: 24 usable days (2026-08-07..08-28 and 2026-09-04..09-05). On Sep 4-5 the 7-day features
@@ -19,9 +20,14 @@ Known approximation: the threshold comes from the validation fit, not the test f
 baseline's threshold likewise comes from a table fitted without the last week.
 Target (a) is reported as "1 if active at t, else model(b)".
 
-Writes results/*.md|csv and figures/model_vs_baselines_h6.png, figures/reliability_h6.png.
+Writes results/*.md|csv and figures/model_vs_baselines_h6.png, figures/reliability_h6.png. Also
+saves what scripts/predict.py needs to models/ (not committed): the three LightGBM test fits (one per
+H), the train-frequency tables for target (b), and info.json with the data range and split.
 """
+import argparse
+import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +67,16 @@ COLORS = {"lgbm": "#6250d6", "persistence": "#2a78d6", "yesterday": "#eb6834", "
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 OUT = ROOT / "results"
 FIG = ROOT / "figures"
+MODELS = ROOT / "models"
+T0 = time.time()
+
+
+def say(msg):
+    print(f"{msg} [{time.time() - T0:.0f}s]", flush=True)
+
+
+def wrote(path):
+    print(f"wrote {path.relative_to(ROOT)}", flush=True)
 
 
 def fit_predict(X, y, m):
@@ -171,11 +187,58 @@ def style(ax):
     ax.tick_params(colors=INK2)
 
 
+def baseline_notes(res, models, period_names):
+    """Lines naming every (model, period) where a baseline has the higher within-oblast AUC at some H,
+    so a summary that shows one baseline cannot hide a better one."""
+    b = res[res["target"] == "b_start"].set_index(["H", "predictor", "period"])["auc_within_oblast"]
+    notes = []
+    for period, title in period_names.items():
+        for model in models:
+            for base in ["persistence", "yesterday", "frequency"]:
+                hs = [H for H in HORIZONS if b[(H, base, period)] > b[(H, model, period)]]
+                if hs:
+                    notes.append(f"Note: {title}, {PREDICTORS.get(base, base)} has a higher within-oblast AUC than "
+                                 f"{model_label(model)} at H = {', '.join(map(str, hs))}.")
+    return notes
+
+
+def model_label(name):
+    return {"lgbm_2026_news": "LightGBM from 2026-01-01 + news"}.get(name, PREDICTORS.get(name, name))
+
+
+def summary(res):
+    """Headline numbers: target (b), LightGBM next to the train-frequency baseline, all 24 test days
+    and Sep 4-5 alone, plus a note wherever any baseline beats LightGBM on within-oblast AUC."""
+    b = res[res["target"] == "b_start"].set_index(["H", "predictor", "period"])
+    cell = lambda H, name, period: (f"{b.loc[(H, name, period), 'auc_within_oblast']:.3f} / "
+                                    f"{b.loc[(H, name, period), 'brier']:.3f}")
+    lines = ["", "Summary. Target (b) new alert starts in (t, t+H]; within-oblast AUC / Brier,",
+             "LightGBM vs the train-frequency baseline. All three baselines: results/test_table.md and",
+             "results/test_table_by_period.md.",
+             f"{'':6}{'all 24 test days':<34}Sep 4-5 only (7-day features scaled)"]
+    for H in HORIZONS:
+        lines.append(f"H={H:<4}{cell(H, 'lgbm', 'all')} vs {cell(H, 'frequency', 'all')}      "
+                     f"{cell(H, 'lgbm', 'sep')} vs {cell(H, 'frequency', 'sep')}")
+    lines += baseline_notes(res, ["lgbm"], {"all": "on all 24 test days", "sep": "on Sep 4-5"})
+    print("\n".join(lines))
+
+
 def main():
+    ap = argparse.ArgumentParser(description="LightGBM for target (b) next to the logistic regression and the "
+                                             "three baselines; writes results/, figures/ and models/.")
+    ap.add_argument("--verbose", action="store_true", help="also print every table (they are all in results/)")
+    args = ap.parse_args()
+
     rows, episodes, raw, first, end = build_rows()
     test_start = end - pd.Timedelta(days=TEST_DAYS)
     oblasts = sorted(rows["oblast"].unique())
+    say(f"rows: {rows['oblast'].nunique()} oblasts x {rows['t'].nunique()} hours, {first:%Y-%m-%d} to "
+        f"{end:%Y-%m-%d} UTC, test from {test_start:%Y-%m-%d}")
     feats = build_features(rows, episodes, raw, load_neighbours(), HORIZONS, oblasts)
+    say(f"features: {len(FEATURES)} per row, for H = {', '.join(map(str, HORIZONS))}")
+    MODELS.mkdir(exist_ok=True)
+    info = {"data_first": first.isoformat(), "data_end": end.isoformat(), "test_start": test_start.isoformat(),
+            "horizons": HORIZONS, "features": FEATURES, "trees": {}, "train_rows": {}}
     now = rows["now"].astype(float)
     lookback_complete = ~touches(rows, OFFICIAL_OUTAGES, before=pd.Timedelta(days=7), after=pd.Timedelta(0))
     y_now = rows["now"]
@@ -195,10 +258,16 @@ def main():
         fitted["lgbm"], trees, final = fit_predict(feats[H], yb, m)
         fitted["lgbm_2026"], trees26, _ = fit_predict(feats[H], yb, m26)
         fitted["logit"], it, w = fit_predict_logit(feats[H], yb, m, oblasts)
-        print(f"H={H}: LightGBM {trees} trees, from-2026 {trees26} trees, logistic converged in {it} "
-              f"iterations (starts_7d coef {w[0]:.3f}); rows train {m['train'].sum()} "
-              f"(from 2026: {m26['train'].sum()}), last week {m['last_week'].sum()}, test {test.sum()} "
-              f"= Aug {periods['aug'].sum()} + Sep 4-5 {periods['sep'].sum()}")
+        say(f"H={H}: fitted LightGBM ({trees} trees), LightGBM from 2026-01-01 ({trees26} trees), "
+            f"logistic ({it} iterations); train {m['train'].sum()} rows, test {test.sum()} rows")
+        if args.verbose:
+            print(f"     logistic starts_7d coef {w[0]:.3f}; train rows from 2026: {m26['train'].sum()}, last week "
+                  f"{m['last_week'].sum()}, test = Aug {periods['aug'].sum()} + Sep 4-5 {periods['sep'].sum()}")
+        final.save_model(str(MODELS / f"lgbm_b_start_h{H}.txt"))
+        frequency_table(rows[m["train"]], f"b_start_{H}").rename("rate").reset_index().to_csv(
+            MODELS / f"frequency_b_start_h{H}.csv", index=False)
+        info["trees"][str(H)] = int(trees)
+        info["train_rows"][str(H)] = int(m["train"].sum())
 
         for target in ["b_start", "a_active"]:
             col = f"{target}_{H}"
@@ -259,6 +328,7 @@ def main():
     res = res.sort_values(["target", "H"], ascending=[False, True], kind="stable").reset_index(drop=True)
     OUT.mkdir(exist_ok=True)
     res.to_csv(OUT / "test_table.csv", index=False, float_format="%.4f")
+    wrote(OUT / "test_table.csv")
     labels = dict(target=lambda d: d["target"].map(TARGETS), predictor=lambda d: d["predictor"].map(PREDICTORS),
                   period=lambda d: d["period"].map(PERIODS))
     main_tab = res[res["period"] == "all"].drop(columns="period").assign(**{k: v for k, v in labels.items() if k != "period"})
@@ -268,6 +338,7 @@ def main():
             "validation fit; frequency: table without that week); 0/1 baselines are taken as is. "
             "The same numbers split by period are in test_table_by_period.md.\n\n")
     (OUT / "test_table.md").write_text(note + md_table(main_tab) + "\n")
+    wrote(OUT / "test_table.md")
     by_period = res.assign(**labels)[["target", "H", "predictor", "period", "n_test", "base_rate",
                                       "auc_within_oblast", "n_oblasts_auc", "brier", "precision", "recall", "f1"]]
     (OUT / "test_table_by_period.md").write_text(
@@ -275,37 +346,52 @@ def main():
         "the 7-day features are computed over the observed part of their window. Sep 4-5 is 48 origins per "
         "oblast: within-oblast AUC there covers only oblasts with both outcomes and is very noisy.\n\n"
         + md_table(by_period) + "\n")
+    wrote(OUT / "test_table_by_period.md")
 
     br = pd.DataFrame(base_rates).sort_values("b_start_6", ascending=False)
     br.index.name = "oblast"
     (OUT / "base_rates_by_oblast.md").write_text(
         "Base rate of (b) new alert starts in (t, t+H] per oblast, test rows (24 days).\n\n"
         + md_table(br.reset_index()) + "\n")
+    wrote(OUT / "base_rates_by_oblast.md")
     (OUT / "persistence_vs_target_a.md").write_text(
         "Target (a) on the test rows: how much is the current alert continuing.\n\n"
         + md_table(pd.DataFrame(decomposition)) + "\n")
+    wrote(OUT / "persistence_vs_target_a.md")
     cal = pd.DataFrame(calibration).assign(predictor=lambda d: d["predictor"].map(PREDICTORS))
     rel6 = pd.concat(reliability, names=["predictor", "bin"]).reset_index()
     (OUT / "calibration.md").write_text(
         "Target (b), test rows. Brier = reliability - resolution + uncertainty (+ residual from 10 "
         "equal-width bins). Reliability: lower is better (miscalibration). Resolution: higher is better.\n\n"
         + md_table(cal, "{:.4f}") + "\n\nReliability table, H = 6:\n\n" + md_table(rel6) + "\n")
+    wrote(OUT / "calibration.md")
     imp = pd.DataFrame({h: [f"{name} ({100 * v:.1f}%)" for name, v in s.head(10).items()]
                         for h, s in importance.items()})
     imp.insert(0, "rank", range(1, 11))
     (OUT / "feature_importance.md").write_text(
         "Top 10 features by share of total gain, full-history LightGBM test fit, per H.\n\n" + md_table(imp) + "\n")
+    wrote(OUT / "feature_importance.md")
     wins = pd.DataFrame(wins)
     (OUT / "oblast_wins.md").write_text(
         "Target (b): in how many oblasts the first predictor has the higher within-oblast AUC, on all 24 test days "
         "and on each period separately.\n\n"
         + md_table(wins) + "\n")
+    wrote(OUT / "oblast_wins.md")
     (OUT / "lowest_bin_h6.md").write_text(
         "LightGBM, target (b), H = 6, test rows with predicted probability < 0.1, by oblast.\n\n"
         + md_table(lowest_bin.reset_index()) + "\n")
+    wrote(OUT / "lowest_bin_h6.md")
 
     comparison_plot(res[res["period"] == "all"], FIG / "model_vs_baselines_h6.png")
+    wrote(FIG / "model_vs_baselines_h6.png")
     reliability_plot(reliability, FIG / "reliability_h6.png")
+    wrote(FIG / "reliability_h6.png")
+    (MODELS / "info.json").write_text(json.dumps(info, indent=1) + "\n")
+    print("wrote models/ (LightGBM per H, train-frequency tables, info.json) for scripts/predict.py", flush=True)
+    summary(res)
+    if not args.verbose:
+        return
+    print()
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_rows", 200):
         print(main_tab.drop(columns=["n_oblasts_auc", "target"]).assign(t=res.loc[main_tab.index, "target"])
               .round(3).to_string(index=False))

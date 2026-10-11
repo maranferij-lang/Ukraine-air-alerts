@@ -1,5 +1,7 @@
-# tested with pandas 3.0.5 and 2.2.3 (identical outputs), numpy 2.x, matplotlib 3.11, lightgbm 4.7
-pandas>=2.0
+# tested from fresh venvs: Python 3.11-3.13 with pandas 3.0.6, numpy 2.4-2.5, matplotlib 3.11.2,
+# lightgbm 4.7.0 (outputs byte-identical); Python 3.9 with pandas 2.3.3, numpy 2.0.2, lightgbm 4.6.0
+# (tables identical, PNGs drawn slightly differently by matplotlib 3.9)
+pandas>=2.1   # DataFrame.map (scripts/evaluate.py md_table) needs 2.1
 numpy
 matplotlib
 lightgbm>=4.0
