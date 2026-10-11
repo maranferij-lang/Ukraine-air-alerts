@@ -11,3 +11,6 @@ data/news/gdelt_conflict_adm1_hourly.csv
 
 # fitted by scripts/evaluate.py for scripts/predict.py
 models/
+
+# telegram: raw page cache of scripts/fetch_telegram_kpszsu.py
+data/telegram/cache/

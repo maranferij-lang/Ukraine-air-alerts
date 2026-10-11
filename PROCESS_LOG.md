@@ -1317,3 +1317,224 @@ lightgbm 4.6.0, arm64.
 **Scope.** Files changed: `README.md`, `results/news/test_table.md`, `scripts/evaluate_news.py` (one string) and
 this log. The user agreed to all four instead of "README and the results file only". After this commit, main is
 done.
+
+---
+
+## 2026-10-11 — Telegram experiment (branch `telegram`, cut from main at f102a89; main untouched)
+
+Experiment, not a deliverable. Question: do the Air Force channel's public threat posts help the 2026 model?
+Compared against "LightGBM from 2026-01-01", with and without the new columns. Time limit: two hours of building
+after the pull ended (14:41 UTC), so until 16:41; everything below was finished before that.
+
+### Scouting (about 10 of 15 minutes, nothing built)
+- I had not done any scouting before the usability rounds. The session transcript held no earlier message about it,
+  so I worked from the five questions in the user's message.
+- `t.me/s/kpszsu` returns 20 posts per page. `?before=<id>` pages back to post 1 (2019-02-11), but the channel only
+  gets dense from late February 2022 (post ~100).
+- Post rate: about 40 a day in 2024, 60–75 in 2025, 100 in spring 2026, 220 in early September, 245 over the last
+  month before the pull.
+- Cost estimate: 2026 only (posts 51283..77124) is about 1,300 pages; the full alert history is about 3,850 pages
+  (2.8–5 h). By the user's rule (over an hour: 2026 only) the user chose 2026 only, against
+  "LightGBM from 2026-01-01".
+- Every sampled post was a short threat report, e.g. "БпЛА на Харків з півночі". This raised the question of
+  leakage, which the user settled (see below).
+
+### Decisions by the user
+- **Leakage rule:** public posts are fine as long as only posts published before t are used, so post time
+  strictly < t, with no 1h lag ("too careful for GDELT"). To show that the gain does not ride on the seconds
+  between a post and a siren, everything is also run with posts < t − 15 min, and both are reported.
+  The 15-minute lag shifts the windows back by 15 minutes. `tg_min_since` is still measured to t.
+- **Per oblast, not national**, because the post rate more than doubles over 2026 and a national count would
+  become a calendar again, like GDELT's.
+- **Parser:** word starts with Ukrainian declensions and main cities, tested against the upstream substring bug
+  (podilskyi to Lviv, pryluky to Volyn), then a hand check of 50 random posts before any model.
+  The user read the 50 and the trap posts and approved the parser.
+- **Features and flags:** see the changes after the check.
+- **Limitations to write down:** deleted posts are invisible; edited posts keep their original time but the text
+  may have changed later.
+- **Safety commits are fine on the experiment branch** (the user's standing preference); the final commit is the
+  one that matters.
+
+### The pull (`scripts/fetch_telegram_kpszsu.py`)
+- Sequential, 1.75 s pause between requests, retry with doubling backoff on connection resets.
+- Range: from 2025-12-31 00:00 UTC (24 hours of lookback for the first rows of 2026) to the posts of 2026-09-08.
+- Run: 13:30 → 14:41 UTC, 1,298 pages, 4,256 s, so 3.3 s a page. That is 44 connection resets, about one in 30
+  requests; all were fixed by the retry. No 429 and no Retry-After.
+- Result: 25,949 posts, ids 51138..77124, with 38 ids missing inside the range (0.15%: deleted or hidden), 602
+  marked edited (2.3%). Kept: id, UTC post time, edited flag, text. The raw pages are cached gzipped and
+  git-ignored; a rerun resumes from the cache.
+- `data/telegram/kpszsu_posts.csv` (4.5 MB) is committed; the posts are public.
+- The first post of the file is at 00:07 on 2025-12-31, so the coverage check uses 2025-12-31 00:00, the start of
+  the pull. My first version used the first post's time and failed by 7 minutes.
+
+### The parser (`src/telegram_oblasts.py`, `scripts/test_telegram_parser.py`)
+- A pattern fires only at the start of a word. Hyphenated and multi-word names are matched first as whole
+  phrases and blanked out, so the halves cannot fire elsewhere: Кам'янець-Подільський is Khmelnytska (not
+  Vinnytska), Переяслав-Хмельницький is Kyivska (not Khmelnytska). Other hyphens become spaces.
+- Ambiguous names that exist in several oblasts are left out (Тростянець, Первомайськ, Золочів, Ямпіль,
+  Олександрівка, ...). "Поділ…" alone maps to nothing, since Podilskyi districts and the town Podilsk exist in
+  several oblasts. Kyiv city and Kyiv oblast are told apart by word form (Київ / Київщина); Славутич is Kyivska
+  (administratively), and "славут" cannot fire inside it.
+- Found while testing on real posts, and fixed:
+  - Genitive alternations i/o: Борисполя, Обухова, Ірпеня, Гостомеля, Ріпок.
+  - Dropped apostrophes: "Камянське".
+  - Contracted forms: Вінничині, Хмельничин, Запорізька.
+- Tests: 56 oblast cases (including both upstream bug cases) and 17 threat-flag cases; the parser knows exactly
+  the 24 units of the alert data.
+- The user's review of the 50 random posts and of every post containing 'поділ', 'прилуц', 'луцьк', 'київ',
+  'дніпр', 'хмельницьк' and 'франківськ': every oblast was right. In particular Кам'янець-Подільський is Khmelnytska,
+  Подільський район goes to Odesa through "Одещина", Прилуцький район goes to Chernihiv, and nothing goes to
+  Lviv or Volyn.
+- 88.9% of the posts name at least one oblast. The 11.1% that name none are mostly nationwide bulletins ("Загроза
+  застосування балістичного озброєння з півночі").
+
+### Flaws found by reading the posts, before the user's check (all fixed)
+- 125 of the 135 "Відбій загрози …" (all-clear) posts set a threat flag. All-clear sentences are now removed before
+  matching, so they count as neither a mention nor a threat. A mixed post keeps its real threat part.
+- Cruise missiles are written "КР" in this channel (104 posts), which the first cruise pattern missed.
+  Loitering munitions ("Бандероль", 163 posts) were not counted as drones.
+- Every post over 300 characters was dropped from the flags as a "summary", which wrongly dropped real multi-region
+  drone reports. Only the nightly "ЗБИТО/ПОДАВЛЕНО" tallies and "знищено понад" / "Протягом …" period totals are
+  now excluded (273 posts).
+- At the user's check, two more things: posts 54390 ("Ракета … вектор – Київ") and 55829 ("Швидкісні цілі") had no
+  flag, and 7 of the 50 were КАБ or tactical aviation with none.
+
+### Flag set, as decided by the user after the check
+- **Dropped** `tg_drone`: with the fixes it was 1 in 97.9% of the 2026 oblast-hours (124 of 5,952 hours had no drone
+  post in the 3 hours before). The oblast mentions already carry the drone signal.
+- **Dropped** `tg_cruise` as its own column: 1 in 2.4% of hours.
+- **Kept** `tg_ballistic`: балісти*, іскандер, кинджал, циркон.
+- **New** `tg_missile` (any missile): КР, крилат*, ракет*, швидкісн* ціл*, кинджал.
+- **New** `tg_kab` (glide bombs / tactical aviation): КАБ, керован* авіабомб* (also "авіаційних бомб"), тактичн* авіац*.
+  I followed the user's lists literally: калібр, Х-nnn and Ту-nn are not in the missile pattern. They are rare
+  (39, 99 and 14 posts).
+- **Denominator of the 6h share:** only posts that name at least one oblast. 720 oblast-hours have no such post in
+  the 6 hours and get NaN.
+- Prevalence, lag 0 (`results/telegram/flag_prevalence.md`): ballistic 4.5% of posts / 26.3% of oblast-hours;
+  missile 6.3% / 26.8%; kab 21.2% / 79.7%. So the kab flag still varies little (it is 0 in about one hour in five).
+- 1,276 posts say "ракет*" and 604 "швидкісн* ціл*", and these are covered by the missile flag now. Not covered by
+  any flag: the glide-bomb family beyond the patterns above, and unspecified "Баражуючі боєприпаси" go to
+  nothing (they are drone-like and were counted by the dropped drone flag only).
+
+### Features (`src/telegram_features.py`): 7 columns
+`tg_m1h`, `tg_m3h` (0/1, oblast named in the last 1h / 3h), `tg_share6h`, `tg_min_since` (minutes since last
+named, capped at 24h), `tg_ballistic`, `tg_missile`, `tg_kab` (national 0/1 in the last 3h). Windows are [e − w, e)
+with e = t − lag. No raw national counts.
+
+### Leakage check (`scripts/check_no_peeking_telegram.py`, `results/telegram/no_peeking.txt`)
+- 40 origins, the same as `check_no_peeking.py`; both lags.
+- Features rebuilt from only the posts published before t − lag (a plain pandas filter): 13,440 values, 0 mismatches.
+- A second, slow implementation written separately (loops and boolean masks): 13,440 values, 0 mismatches.
+- Negative control, window ending 15 minutes after t: it differs at all 29 origins that had a post that can change a
+  column in [t, t + 15 min) (and at 36 of 40 overall, since the shifted window also drops posts at its old end).
+- Negative control, lag 0 against lag 15: it differs at all 28 origins with such a post in [t − 15 min, t) (39 of 40).
+- My first version asserted "differs at exactly the origins with any post in the extra minutes", which was wrong
+  (shifting a window changes it at both ends, and a post that names nothing changes nothing). I changed the
+  assertion, not the check, to "every origin with a relevant post differs".
+- Edited posts: 602 of 25,949 (2.3%); 135 of 5,321 in the test window. Dropping them changes at most 1.7% of the
+  values of any column materially (share6h by more than 0.05, minutes by more than 15, a 0/1 flipped).
+  The first version counted any change at all, which showed 14.8% for share6h and meant nothing.
+
+### The comparison (`scripts/evaluate_telegram.py` → `results/telegram/`)
+- Same rows, split, 2026 training rows and thresholds as main; the 90 rows shared with `results/test_table.csv`
+  match it (720 values, 0 differences). Test window: 24 days, unchanged.
+- Within-oblast AUC / Brier, all 24 days (with lag 0 | lag 15 | without Telegram | train frequency):
+  - H=1: 0.681 / 0.086 | 0.614 / 0.086 | 0.648 / 0.087 | 0.495 / 0.101
+  - H=3: 0.638 / 0.142 | 0.605 / 0.142 | 0.642 / 0.142 | 0.581 / 0.177
+  - H=6: 0.631 / 0.138 | 0.623 / 0.139 | 0.619 / 0.139 | 0.612 / 0.178
+- Paired, day-block bootstrap (AUC difference with Telegram minus without, 95% interval):
+  - lag 0: H=1 +0.0322 [+0.0039, +0.0531], H=3 −0.0038 [−0.0128, +0.0096], H=6 +0.0124 [+0.0060, +0.0191];
+  - lag 15: H=1 −0.0344 [−0.0501, +0.0078], H=3 −0.0365 [−0.0594, +0.0104], H=6 +0.0042 [−0.0070, +0.0125].
+- Brier differences are tiny: at most 0.0006 in magnitude, at lag 0 for H=1.
+- Oblasts with the higher within-oblast AUC on all 24 days: lag 0: 20 / 10 / 16 of 24 at H = 1 / 3 / 6;
+  lag 15: 13 / 9 / 11.
+- Importance: only `tg_min_since` carries weight (rank 9 of 21 at H=1, lag 0, with 3.3% of the gain). `tg_m1h` and
+  `tg_m3h` take 0.0% (each is a threshold of `tg_min_since`); `tg_share6h` and the flags 0.1–0.5%.
+- Trees chosen by early stopping barely change (H=1: 122 without, 94 with lag 0, 121 with lag 15).
+- By month, the columns do not follow the post rate (93 → 179 posts a day from January to September), except
+  `tg_min_since`, which falls in September (550 minutes against 760–880 earlier) with the same rate (`feature_drift_by_month.md`).
+- **Reading:** Telegram helps a little with posts up to t at H=1 and H=6; the within-oblast AUC gain is gone with the
+  15-minute lag (H=1 is lower, the interval includes zero), and H=3 shows nothing at either lag. So the gain
+  depends on posts from the last 15 minutes. Within-oblast AUC is noisy: it differs by 0.04 between main's
+  full-history and 2026 models with the same Brier, and the bootstrap covers days only, not refits.
+- On Sep 4–5 same hour yesterday still has the higher within-oblast AUC than every LightGBM variant at H=3 and H=6.
+
+### Limitations (also in the README)
+Deleted posts are invisible (the page is the channel as it is today). Edited posts keep their original time, but
+the text is the text at pull time and may have changed after t. The place list is not exhaustive. Sep 4–5 is 48
+origins per oblast.
+
+### Other
+- `scripts/evaluate.py`: `baseline_notes` takes an optional `labels` argument so the new models show readable names.
+  The output on main's data is unchanged.
+- Safety commits on this branch: beb4991, 2086a06, 0be2f07, 18c6e6c (code, then the posts file and parser check).
+- Not decided: whether this goes anywhere near main. Main is frozen and untouched.
+
+---
+
+## 2026-10-11 — Round 10 (main): the Telegram experiment merged as a documented result
+
+The user's decision: the result is real and short-lived ("nowcasting, not forecasting"), so `telegram` is merged
+into `main`, as `news` was, "one place to read". Done as a merge commit (the branch history stays visible), with
+the main-side edits inside that one commit.
+
+### What the user asked for, and where I deviated (said before doing it)
+- **"A 1 hour nowcasting signal"** is not what the numbers show:
+  - With posts up to t, H=6 also gains (+0.0124 [+0.0060, +0.0191], 16 of 24 oblasts); only H=3 shows nothing.
+  - With the 15-minute lag the Brier gain at H=1 is still there, at half size (−0.0003 [−0.0005, −0.0001]); it is
+    only the within-oblast AUC gain that disappears.
+  - Only two lags (0 and 15 minutes) were tried, so how fast the signal decays is not known.
+- So the README sentence reads: the posts help only when they are minutes old, so they are a nowcasting signal and
+  not a forecasting one; with posts up to t the within-oblast AUC gains at H=1 and H=6, and with a 15-minute lag the
+  gain is gone. The 5-minute lag sweep is under next steps.
+- **The "next steps" bullet about Telegram** did not exist on main. I added one: what we found, then (1) a lag sweep,
+  (2) the full-history pull (about 3,850 pages, 3–5 hours), (3) threat types per oblast instead of the three
+  national flags, which carry 0.1–0.5% of the gain.
+
+### On main
+- **README:**
+  - the Telegram section, as on the branch, headed as a documented result (it includes the lag 0 / lag 15 table next
+    to all three baselines, the paired comparison, the limitations);
+  - a one-sentence summary at the top of the section;
+  - the sentence "the main model stays the full-history LightGBM without Telegram", placed under the table so
+    the two numbers have their baselines next to them: the best Telegram model (2026-only, posts < t) is under main's
+    model at every H (H=1: 0.681 against 0.688), and Telegram covers only 2026;
+  - one bullet in "Results in brief" pointing at it (no model numbers in it);
+  - the Status line (rounds 1–10, both experiments merged), the new "Next:" bullet, one optional quick-start line
+    (`evaluate_telegram.py`, about 3 minutes, from the committed posts), and the Run order / Layout lines.
+- **Headline numbers unchanged:** the brief block's numbers, `results/*.md|csv` and `figures/` of the main model are
+  untouched; the check is below.
+- **One quick-start line rebuilds all of `results/telegram/`.** `evaluate_telegram.py` now also runs the 50-post
+  parser check and the leakage check (as `evaluate_news.py` does), so nobody has to run three scripts.
+  `telegram_parser_check.py` got a `main(argv)` for that. The posts are read from the committed CSV, no network.
+- **The table caption in `results/telegram/test_table.md`** said "(branch telegram)". As in round 9, I changed the
+  string in `evaluate_telegram.py` and regenerated: only line 1 of that file changed, and now reads "merged into main
+  as a documented result". It is a new file from the merge, not a file of main's existing results.
+- `data/telegram/cache/` (raw pages, from the pull) stays git-ignored and is not part of the merge.
+
+### Checks
+- Fresh `git clone` of the merge commit (7719e59, main) into a new folder with a new venv, then the whole quick
+  start in order: `plot_weekly.py`, `evaluate.py`, `evaluate_news.py`, `check_no_peeking.py`, `evaluate_telegram.py`,
+  `test_telegram_parser.py`, `predict.py`. Times in seconds, Python 3.13.16 | 3.9.25:
+
+  | step | 3.13 | 3.9 |
+  |---|---|---|
+  | pip install | 28 | 32 |
+  | `plot_weekly.py` | 9 | 11 |
+  | `evaluate.py` | 80 | 84 |
+  | `evaluate_news.py` | 96 | 110 |
+  | `check_no_peeking.py` | 22 | 25 |
+  | `evaluate_telegram.py` (parser check, comparison, leakage check) | 168 | 176 |
+  | `test_telegram_parser.py` | 2 | 1 |
+  | `predict.py` | 6 | 5 |
+
+- Every step exited 0 with no warning lines.
+- **Python 3.13** (pandas 3.0.6, numpy 2.5.4, matplotlib 3.11.2, lightgbm 4.7.0): `git status` empty. All 30 tracked
+  files in `results/` and `figures/` are byte-identical, 14 of them main's own (`results/*.md|csv`, `figures/`), the
+  rest `results/news/`, `results/telegram/` and `figures/gdelt_weekly.png`.
+- **Python 3.9** (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0): every table is byte-identical,
+  including all of `results/telegram/`. The same four PNGs as in round 8 differ by a few pixels of layout
+  (matplotlib 3.9), as the README already says.
+- Python 3.11 and 3.12 were not re-run this round (they were in round 8; the Telegram line is untested there).
+- Main's results and figures were not touched by the merge commit: `git diff` of the commit against main's previous
+  tip lists nothing in `results/` outside `results/telegram/`, and nothing in `figures/`.
