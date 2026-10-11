@@ -16,6 +16,7 @@ import argparse
 import json
 import signal
 import sys
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +156,45 @@ def forecast(t, official, raions, episodes, first, end, boosters, freq):
     return table
 
 
+def span(gap):
+    """'22 minutes', '1 h 20 min'"""
+    mins = int(round(gap.total_seconds() / 60))
+    if mins < 60:
+        return f"{mins} minutes"
+    if mins < 48 * 60:
+        return f"{mins // 60} h {mins % 60:02d} min"
+    return f"{mins // 1440} days {mins % 1440 // 60} h"
+
+
+def plain_one(r, when, t, nxt):
+    """One plain sentence for one oblast: the three probabilities and what happened."""
+    pct = lambda v: f"{100 * v:.0f}%"
+    name = r["oblast"].replace(" oblast", "")
+    head = (f"{name}, {when}: {pct(r['model_1'])} chance a new alert starts within 1 hour, "
+            f"{pct(r['model_3'])} within 3, {pct(r['model_6'])} within 6.")
+    gap = None if nxt is None else nxt - t
+    down = touches(make_rows([r["oblast"]], t, t), OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=pd.Timedelta(hours=6)).any()
+    if gap is not None and gap <= pd.Timedelta(hours=6):
+        tail = f"It did start, {span(gap)} later" + (" (the feed was down for part of this window, so the real start may be earlier)." if down else ".")
+    elif r["happened_6"] >= 0:
+        tail = "No new alert started within 6 hours" + (f"; the next came {span(gap)} later." if gap is not None else ".")
+    else:
+        tail = "What happened next is not known (the data ends or the feed was down)."
+    return f"{head} {tail}"
+
+
+def plain_all(table, when):
+    """One plain sentence for every oblast: who is highest within 1 hour, and how many alerts did start."""
+    pct = lambda v: f"{100 * v:.0f}%"
+    top = table.sort_values("model_1", ascending=False).head(3)
+    names = ", ".join(f"{o.replace(' oblast', '')} {pct(v)}" for o, v in zip(top["oblast"], top["model_1"]))
+    known = (table["happened_1"] >= 0).all()
+    outcome = (f" A new alert did start within 1 hour in {int((table['happened_1'] == 1).sum())} of {len(table)} oblasts."
+               if known else "")
+    return (f"All {len(table)} oblasts, {when}: chance that a new alert starts within 1, 3 and 6 hours (table below). "
+            f"Highest within 1 hour: {names}.{outcome}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Probability of a new alert in the next 1, 3 and 6 hours, as the "
                                              "model would have said at a past hour, next to the baselines and "
@@ -185,12 +225,24 @@ def main():
     table = table[table["oblast"].isin(chosen)].reset_index(drop=True)
 
     local = t.tz_convert(KYIV)
+    when = f"{local:%H:%M} Kyiv time on {local.day} {local:%b}"
+    pct = lambda v: f"{100 * v:.0f}%"
+    yn = lambda v: {1: "yes", 0: "no", -1: "n/a"}[int(v)]
+    if args.all:
+        print(textwrap.fill(plain_all(table, when), 100))
+    else:
+        r = table.iloc[0]
+        starts = episodes.loc[(episodes["oblast"] == r["oblast"]) & (episodes["start"] > t), "start"].sort_values()
+        nxt = starts.iloc[0] if len(starts) and starts.iloc[0] < end else None
+        print(textwrap.fill(plain_one(r, when, t, nxt), 100))
+    if t < test_start:
+        print("This hour was part of the training data, so this is not a real forecast.")
+    print()
     print(f"{'All oblasts' if args.all else chosen[0]}, origin {t:%Y-%m-%d %H:%M} UTC ({local:%H:%M} Kyiv time)")
     for line in ([round_note] if round_note else []) + status_lines(t, first, end, test_start, oblasts[0]):
         print(line)
     print(f"Inputs: only alerts known at {t:%H:%M} UTC; neighbours from the hour before. Target: a new alert "
           "starts within the next H hours.")
-    yn = lambda v: {1: "yes", 0: "no", -1: "n/a"}[int(v)]
     if args.all:
         print("Columns per H: model = LightGBM probability; yday = same hour yesterday; freq = train frequency; "
               "now = same as now (one column for all H);\nhappened = a new alert started (n/a: after the end "
@@ -204,7 +256,6 @@ def main():
         print(out.to_string(index=False))
         return
 
-    r = table.iloc[0]
     print(f"Under alert at {t:%H:%M} UTC: {yn(r['now'])}.\n")
     rows = [{"new alert within": f"{H} h", "model": f"{r[f'model_{H}']:.3f}", "same as now": int(r["now"]),
              "same hour yesterday": "n/a" if r[f"yday_{H}"] < 0 else int(r[f"yday_{H}"]),
@@ -212,18 +263,14 @@ def main():
     print(pd.DataFrame(rows).to_string(index=False))
     if any(r[f"happened_{H}"] < 0 or r[f"yday_{H}"] < 0 for H in HORIZONS):
         print("n/a: the window is after the end of the data or touches the feed outage.")
-    starts = episodes.loc[(episodes["oblast"] == r["oblast"]) & (episodes["start"] > t), "start"].sort_values()
-    if len(starts) and starts.iloc[0] < end:
-        nxt = starts.iloc[0]
+    if nxt is not None:
         gap = nxt - t
         after = f"{int(gap.total_seconds() // 3600)}:{int(gap.total_seconds() % 3600 // 60):02d}"
-        gap_row = make_rows([r["oblast"]], t, t)
         caveat = (f" (the feed was down {OUTAGES}, so an earlier alert may be missing)"
-                  if touches(gap_row, OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=gap).any() else "")
+                  if touches(make_rows([r["oblast"]], t, t), OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=gap).any() else "")
         print(f"\nNext new alert after {t:%H:%M} UTC: {nxt:%Y-%m-%d %H:%M} UTC, {after} later{caveat}.")
     else:
         print("\nNo new alert after this hour before the official data ends.")
-
 
 if __name__ == "__main__":
     if hasattr(signal, "SIGPIPE"):  # `predict.py ... | head` exits quietly instead of a BrokenPipeError

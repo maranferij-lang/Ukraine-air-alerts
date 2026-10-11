@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from scripts import check_no_peeking_telegram, telegram_parser_check
-from scripts.evaluate import (PERIODS, POST_SWITCH_START, TARGETS, baseline_notes,
+from scripts.evaluate import (PERIODS, where_to_look, POST_SWITCH_START, TARGETS, baseline_notes,
                               check_state_features_outside_outages, fit_predict, md_table, per_oblast_auc)
 from scripts.evaluate_news import day_bootstrap
 from src.baselines import frequency_table, same_hour_yesterday, train_frequency
@@ -242,6 +242,7 @@ def main():
 
     check_no_peeking_telegram.main(verbose=args.verbose)
     summary(res)
+    where_to_look([("results/telegram/test_table.md", "the Telegram comparison next to the simple rules"), ("results/telegram/telegram_vs_no_telegram.md", "the paired differences")])
     if not args.verbose:
         return
     print()

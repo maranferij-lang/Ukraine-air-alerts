@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from scripts import check_gdelt_events, check_no_peeking_news, news_correlation
-from scripts.evaluate import (PERIODS, baseline_notes, POST_SWITCH_START, TARGETS, check_state_features_outside_outages,
+from scripts.evaluate import (PERIODS, where_to_look, baseline_notes, POST_SWITCH_START, TARGETS, check_state_features_outside_outages,
                               fit_predict, md_table, per_oblast_auc)
 from src.baselines import frequency_table, same_hour_yesterday, train_frequency
 from src.dataset import EVAL_LOOKBACK, HORIZONS, TEST_DAYS, build_rows, split
@@ -240,6 +240,7 @@ def main():
     check_no_peeking_news.main(verbose=args.verbose)
     check_gdelt_events.main(verbose=args.verbose)
     summary(res)
+    where_to_look([("results/news/test_table.md", "the news comparison next to the simple rules"), ("results/news/news_vs_no_news.md", "the paired differences")])
     if not args.verbose:
         return
     print()

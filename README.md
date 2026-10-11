@@ -1,101 +1,104 @@
 # Ukraine air-raid alerts: short-horizon forecasting by oblast
 
-**Question.** At hour t, using only what is known at t: will there be an air-raid alert in
-oblast X in the next H hours, for H = 1, 3, 6? The answer is yes/no plus a probability.
-One model covers all oblasts, with oblast as a feature.
+## What this is
+Ukraine publishes the history of its air-raid alerts, region by region. This project uses that history to estimate, for every region and every hour, how likely it is that a **new** alert starts in the next 1, 3 or 6 hours. One model covers all 24 regions (23 oblasts and Kyiv city, called oblasts below), and at every forecast hour it uses only what was known at that hour. Every number is shown next to simple rules, such as "the usual rate for this oblast at this hour", so you can see where the model adds little. It is a course test task.
 
-**Results in brief**
+**The question.** At hour t, using only what is known at t: will a new alert start in oblast X within the next H hours, for H = 1, 3 and 6? The answer is a probability.
+
+**Why new alerts, and not "is there an alert".** An hour with an alert in it is often just the current alert continuing: 67.5% of the "alert within 1 hour" cases already had an alert running at t (50.1% at H=3, 41.6% at H=6; `results/persistence_vs_target_a.md`). Answering that is mostly reading the present, so the part that has to be forecast is the new start.
+
+## Results
+New alert within H hours, test window of 24 days. Each cell is within-oblast AUC / Brier (see below):
+
+| H (hours ahead) | Model | Train frequency | Same hour yesterday | Same as now | In words |
+|---|---|---|---|---|---|
+| 1 | 0.688 / 0.087 | 0.495 / 0.101 | 0.525 / 0.181 | 0.438 / 0.288 | Better than all three simple rules, on ranking and on probabilities. |
+| 3 | 0.645 / 0.145 | 0.581 / 0.177 | 0.524 / 0.281 | 0.480 / 0.327 | Better than all three simple rules, on ranking and on probabilities. |
+| 6 | 0.639 / 0.140 | 0.612 / 0.178 | 0.516 / 0.267 | 0.489 / 0.365 | Probabilities clearly better; the ranking edge over train frequency is small and not established (below). |
+
+- **Within-oblast AUC** is how well the model ranks risky hours above quiet ones inside one oblast: 0.5 is a coin flip, 1.0 is perfect.
+- **Brier** is how close the probabilities are to what happened: lower is better.
 - **Data:** official alerts from Vadimkin/ukrainian-air-raid-sirens-dataset, upstream commit `7ccd436`, pulled 2026-10-10 (re-pulled 18:58 UTC, unchanged). The official feed ends 2026-09-07.
 - **Test window:** the last 30 days of official data (2026-08-07 → 09-05), minus the Aug 29 – Sep 2 feed outage and Sep 3 (24h lookback). That leaves 24 days: the most recent official data we trust.
-- **New alert within H hours (b), within-oblast AUC / Brier, LightGBM vs train-frequency baseline, all 24 days:** H=1 0.688 / 0.087 vs 0.495 / 0.101 · H=3 0.645 / 0.145 vs 0.581 / 0.177 · H=6 0.639 / 0.140 vs 0.612 / 0.178 (frequency is the best of the three baselines on Brier at every H; all three are in the tables below).
 - **Same, Sep 4–5 alone (7-day features scaled from observed hours):** H=1 0.534 / 0.098 vs 0.466 / 0.119 · H=3 0.476 / 0.158 vs 0.424 / 0.218 · H=6 0.447 / 0.120 vs 0.409 / 0.203. Note: on Sep 4–5, same hour yesterday has a higher within-oblast AUC than LightGBM at H = 1, 3, 6.
-- **Telegram (separate experiment, not in the model above):** posts of the Air Force channel help only when they are minutes old, so they are a nowcasting signal, not a forecasting one; numbers next to the baselines in "News and text data". The main model stays the full-history LightGBM without Telegram.
 - **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
+- **Telegram (separate experiment, not in the model above):** posts of the Air Force channel help only when they are minutes old, so they are a nowcasting signal, not a forecasting one; numbers next to the baselines in "News and text data". The main model stays the full-history LightGBM without Telegram.
 
-**Quick start**
+## Quick start
 ```bash
 git clone https://github.com/maranferij-lang/Ukraine-air-alerts
 cd Ukraine-air-alerts
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-brew install libomp                   # macOS only: lightgbm needs it, or `import lightgbm` crashes
-pip install -r requirements.txt       # ~30 s
-python scripts/plot_weekly.py         # ~10 s    -> figures/alerts_per_week.png (+ .csv)
-python scripts/evaluate.py            # ~1.5 min -> results/, figures/model_vs_baselines_h6.png, figures/reliability_h6.png, models/
-python scripts/evaluate_news.py       # ~2 min   optional: the news experiment -> results/news/, figures/gdelt_weekly.png
-python scripts/check_no_peeking.py    # ~25 s    optional: leakage check, prints only
-python scripts/evaluate_telegram.py   # ~3 min   optional: the Telegram experiment, from the committed posts -> results/telegram/
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python scripts/plot_weekly.py
+python scripts/evaluate.py
 ```
-- **Tested** from a fresh clone and a fresh venv (Linux, 4 cores), running every command above
-  plus `predict.py`:
-  - **Python 3.11, 3.12 and 3.13** (pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0):
-    every file in `results/` and `figures/` came out byte-identical to the committed ones.
-  - **Python 3.9** (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0): every file in
-    `results/` came out byte-identical. The four PNGs differ by a few pixels of layout, because the
-    older matplotlib draws them slightly differently; the numbers behind them are the same.
-  - **Python 3.9 on macOS arm64**, with the same packages, also reproduced every number.
-  - The Telegram line (`evaluate_telegram.py`, the parser tests) was run on Python 3.13 and 3.9 only; on 3.13 every
-    output is byte-identical, on 3.9 the tables are and only the same four PNGs differ.
-- **Windows** (cmd or PowerShell): run the lines one at a time, leave out the `# …` comments, and
-  activate with `.venv\Scripts\activate`.
-- **No download needed:** the data snapshots are in the repo: alerts in `data/raw/` (upstream commit
-  `7ccd436`), hourly GDELT counts in `data/news/`. `scripts/fetch_data.py` and
-  `scripts/fetch_gdelt_events.py` only re-pull them, and need network.
-- `evaluate.py` also saves the fitted models to `models/` (not committed) for `scripts/predict.py`,
-  below. The full step-by-step order is in "Run order".
+- `pip install` takes about 30 s. `plot_weekly.py` takes about 10 s and writes `figures/alerts_per_week.png`. `evaluate.py` takes about 1.5 min and writes the tables in `results/`, the pictures in `figures/` and the fitted models in `models/` (not committed), then prints a short summary in plain words and where to look.
+- **macOS only**, once, before `pip install` (without it, importing lightgbm crashes):
 
-## Usage
-**What the model would have said at a past hour** (`scripts/predict.py`; run `evaluate.py` first):
 ```bash
-python scripts/predict.py --at "2026-09-05 14:00" --oblast Kyivska      # one oblast; time in UTC
-python scripts/predict.py --at "2026-09-05 17:00+03:00" --oblast Lviv   # same hour, written in Kyiv time
-python scripts/predict.py --at "2026-09-05 14:00" --all                 # every oblast, one row each
+brew install libomp
 ```
-- **Output:** the probability that a new alert starts within 1, 3 and 6 hours. Next to it are the
-  three baselines (same as now, same hour yesterday, train frequency) and what actually happened,
-  plus the time of the next new alert.
-- **Inputs are recomputed from the alert data as it stood at that hour:** only alerts that had
-  started by then, with the end of a running alert unknown. This is the same cut
-  `check_no_peeking.py` checks.
-- **Any hour in the data range is allowed** (2022-03-16 00:00 → 2026-09-05 23:00 UTC). Times are
-  rounded down to the hour.
-  - Hours before 2026-08-07 are marked **TRAINING PERIOD**: the model has seen what happened next,
-    so those numbers are not forecasts.
-  - Hours whose data touches the 2026-08-29..09-02 feed outage are flagged.
-- **Oblast names** as in the data, without "oblast", in any case, or any unique start: `Kyivska`,
-  `Kyiv City`, `Lviv`. `Kyiv` alone is ambiguous.
-- If `models/` is missing, `predict.py` says to run `evaluate.py` first.
+- **Windows:** activate with `.venv\Scripts\activate` instead of the `source` line, and run the lines one at a time.
+- Every block here can be pasted as it is, also into zsh (the macOS default), which does not accept comments in pasted lines. That is why the blocks have none.
+- No download is needed: the data is in the repo (alerts in `data/raw/`, upstream commit `7ccd436`; hourly GDELT counts in `data/news/`; Telegram posts in `data/telegram/`). `scripts/fetch_*.py` only re-pull it and need network.
+- **Optional**, each on its own:
 
-**Flags**
-- `evaluate.py` prints one progress line per step and one "wrote …" line per file, then a short
-  summary: LightGBM next to the train-frequency baseline, on all 24 test days and on Sep 4–5. A
-  note follows wherever another baseline has the higher within-oblast AUC (on Sep 4–5, same hour
-  yesterday does at every H).
-- `evaluate.py --verbose` also prints every table. They are all in `results/` anyway.
-- `evaluate_news.py [--verbose]` does the same for the news experiment. It runs the whole news
-  chain from `data/news/`: correlation, comparison, leakage check, and the weekly plot, building the
-  hourly panel the plot needs if it is missing.
+```bash
+python scripts/evaluate_news.py
+python scripts/evaluate_telegram.py
+python scripts/check_no_peeking.py
+```
+- `evaluate_news.py` takes about 2 min and rebuilds `results/news/`; `evaluate_telegram.py` takes about 3 min and rebuilds `results/telegram/`; `check_no_peeking.py` takes about 25 s and prints the leakage check.
+- **Tested** on Linux from a fresh clone and a fresh venv: Python 3.11, 3.12 and 3.13 (pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0) and Python 3.9 (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0); on a Mac with Python 3.9 every number matched. The Telegram line was run on Python 3.13 and 3.9 only.
+- **Tables in `results/` are byte-identical across the machines we tried. Figures can differ slightly (fonts, matplotlib version): on Python 3.9 the four PNGs differ by a few pixels, the numbers behind them do not.**
 
-Ground rules (fixed):
-- No leakage. Every feature for origin t uses only what is known at t. Neighbours use the last
-  completed hour [t−1h, t). Static tables (the frequency baseline) are fitted on train only;
-  rolling features may use anything already observed by t. Splits are chronological, never random.
-- Every model number is shown next to three baselines. If the model doesn't beat them, we say so.
-- Metrics: Brier, **ROC-AUC within oblast** (main number), precision/recall at a threshold. No
-  plain accuracy.
-- Working rules for this repo are in `CLAUDE.md`.
+## Try it: what did the model say at a past hour?
+```bash
+python scripts/predict.py --at "2026-09-05 14:00" --oblast Kharkivska
+```
+```text
+Kharkivska, 17:00 Kyiv time on 5 Sep: 51% chance a new alert starts within 1 hour, 87% within 3, 96%
+within 6. It did start, 22 minutes later.
 
-**Status:** final. Rounds 1–10 on `main`, including the news experiment (a negative result) and the Telegram
-experiment (a nowcasting signal), both merged as documented results.
-LightGBM for target (b), checked against a plain logistic regression and a post-switch-only fit,
-next to the three baselines.
-`PROCESS_LOG.md` has every step; results are in `results/`.
+new alert within model  same as now  same hour yesterday train frequency happened
+             1 h 0.505            0                    0           0.193      yes
+             3 h 0.872            0                    1           0.474      yes
+             6 h 0.961            0                    1           0.794      yes
+```
+- **The first line is the answer in words** (the time is Kyiv time; `--at` is UTC unless you add an offset such as `+03:00`). The table under it has the same probabilities next to the three simple rules and what happened. "happened" is yes in all three windows.
+- The model only sees what was known at that hour. For any hour before 2026-08-07 the model was trained on that period, so the output says so: it is not a forecast.
+- Other forms: `--all` instead of `--oblast` gives every oblast in one table; `--at "2026-09-05 17:00+03:00"` writes the same hour in Kyiv time. Oblast names are as in the data, without "oblast", in any case, or any unique start: `Kharkivska`, `Kyiv City`, `Lviv` (`Kyiv` alone is ambiguous). Any hour from 2022-03-16 to 2026-09-05 is allowed.
+- It needs `models/`, which `evaluate.py` writes; without them it says to run `evaluate.py` first. Files land in the repo folder: tables in `results/`, pictures in `figures/`, models in `models/`.
+- `evaluate.py --verbose` also prints every table; they are all in `results/` anyway.
 
-**Telegram experiment:** per-oblast features from the Air Force channel's posts, merged as a documented result: they
-help only when the posts are minutes old, a nowcasting signal and not a forecasting one. The model above does not use
-them. See "News and text data" below.
+## How this was built
+Claude Code, an AI coding assistant, wrote the code. The rules are in `CLAUDE.md`; the project owner wrote them, set the task of every round, and checked the numbers by hand each time. Every step, decision and mistake is in `PROCESS_LOG.md`. The full AI conversation log is submitted separately.
 
-**News experiment:** a GDELT news-intensity feature, merged as a documented negative result: it did
-not help, and the model above does not use it. See "News and text data" below.
+The rules (fixed):
+- No leakage. Every feature for origin t uses only what is known at t. Neighbours use the last completed hour [t−1h, t). Static tables (the frequency baseline) are fitted on train only; rolling features may use anything already observed by t. Splits are chronological, never random.
+- Every model number is shown next to three simple rules. If the model doesn't beat them, we say so.
+- Metrics: Brier, **ROC-AUC within oblast** (main number), precision/recall at a threshold. No plain accuracy.
+
+Where the checks caught mistakes:
+- **The volunteer feed mislabels Lviv and Volyn:** a substring bug in its parser, upstream. We found it when the volunteer and official feeds disagreed, and we never compare western oblasts with volunteer numbers.
+- **Two leaks in the original model spec:** a frequency table "from the last 4 weeks of train" contains each row's own outcome, or a future one (now a rolling average of the same hour 1–4 weeks earlier); and the F1 threshold was to be picked on a week the model had been trained on (now picked with a model that did not see it).
+- **A shrunk test window:** a feature quietly cut the test window from 30 to 22 days and only the log said so. The rule is to ask first; it was fixed, and the window is now 24 usable days.
+- **News made the model worse:** the GDELT news count lowered the ranking at H=1 and H=3, probably because a national count acts as a calendar. It is merged as a documented negative result.
+- **This README's first quick start broke on a Mac:** zsh does not treat `#` as a comment in pasted lines, so nothing ran. All code blocks are now comment-free and were pasted into zsh to test them.
+
+## Contents
+- [Data](#data): the sources, what "under alert" means, the feed outage.
+- [Targets, baselines, evaluation (`scripts/evaluate.py`)](#targets-baselines-evaluation-scriptsevaluatepy): the two targets, the three simple rules, the metrics.
+- [Model (`scripts/evaluate.py`, `src/features.py`)](#model-scriptsevaluatepy-srcfeaturespy): the features and the LightGBM setup.
+- [News and text data](#news-and-text-data): why the main model uses no text, and two experiments that were tried: GDELT news (a negative result) and Telegram posts (a real gain that lasts only minutes, so a nowcasting signal and not a forecast). The main model uses neither.
+- [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
+- [Run order](#run-order): every script, in order.
+- [Definitions](#definitions): oblast, episodes, the hourly panel.
+- [Layout](#layout): the files.
+
+Status: final (round 11). Files to open first: `results/test_table.md`, `figures/model_vs_baselines_h6.png`, `PROCESS_LOG.md`.
 
 ## Data
 
@@ -490,31 +493,59 @@ Next:
 
 ## Run order
 
+The commands, in order. These lines can be pasted as they are, also into zsh. What each one does is under the block. The three scripts that re-pull data from the internet are left out of the block on purpose: they replace the pinned data snapshot (and with it, possibly, the numbers). They are listed at the end.
+
 ```bash
 pip install -r requirements.txt
-python scripts/fetch_data.py         # optional: re-pull (overwrites data/raw/, updates PULL_INFO.md)
-python scripts/inspect_raw.py        # raw file summary: columns, ranges, duplicates, naive flag
-python scripts/build_panel.py        # hourly panel -> data/processed/panel_official_min0.5.csv.gz
-python scripts/build_panel.py --min-share 0          # variant: oblast = any raion
-python scripts/build_panel.py --source volunteer     # variant: volunteer feed
-python scripts/plot_weekly.py        # figures/alerts_per_week.png (+ .csv)
-python scripts/hand_checks.py        # round-1 hand-check numbers (needs the three panels)
-python scripts/evaluate.py           # model + baselines: tables in results/, H=6 plots
-python scripts/check_no_peeking.py   # leakage check: baseline inputs and model features
-python scripts/predict.py --at "2026-09-05 14:00" --all   # model at a past hour (needs models/)
-# news experiment (scripts/evaluate_news.py runs the four steps after the re-pull)
-python scripts/fetch_gdelt_events.py # optional: re-pull GDELT events, about 9 minutes, needs network -> data/news/
-python scripts/check_gdelt_events.py # gaps, heavy days, figures/gdelt_weekly.png (builds the panel if missing)
-python scripts/news_correlation.py   # news vs starts_7d / share_7d on training rows
-python scripts/evaluate_news.py      # 2026 model with and without news -> results/news/
-python scripts/check_no_peeking_news.py  # leakage check for the news columns
-# telegram experiment (scripts/evaluate_telegram.py runs the parser check, the comparison and the leakage check)
-python scripts/fetch_telegram_kpszsu.py   # optional: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
-python scripts/test_telegram_parser.py    # oblast parser and threat-flag tests
-python scripts/telegram_parser_check.py   # 50 random posts + substring traps -> results/telegram/parser_check_50.md
-python scripts/evaluate_telegram.py       # 2026 model with and without Telegram, lag 0 and 15 min -> results/telegram/
-python scripts/check_no_peeking_telegram.py  # leakage check for the Telegram columns
+python scripts/inspect_raw.py
+python scripts/build_panel.py
+python scripts/build_panel.py --min-share 0
+python scripts/build_panel.py --source volunteer
+python scripts/plot_weekly.py
+python scripts/hand_checks.py
+python scripts/evaluate.py
+python scripts/check_no_peeking.py
+python scripts/predict.py --at "2026-09-05 14:00" --all
+python scripts/check_gdelt_events.py
+python scripts/news_correlation.py
+python scripts/evaluate_news.py
+python scripts/check_no_peeking_news.py
+python scripts/test_telegram_parser.py
+python scripts/telegram_parser_check.py
+python scripts/evaluate_telegram.py
+python scripts/check_no_peeking_telegram.py
 ```
+
+- `pip install -r requirements.txt`: install the packages (Python 3.9 to 3.13)
+- `python scripts/inspect_raw.py`: raw file summary: columns, ranges, duplicates, naive flag
+- `python scripts/build_panel.py`: hourly panel -> data/processed/panel_official_min0.5.csv.gz
+- `python scripts/build_panel.py --min-share 0`: variant: oblast = any raion
+- `python scripts/build_panel.py --source volunteer`: variant: volunteer feed
+- `python scripts/plot_weekly.py`: figures/alerts_per_week.png (+ .csv)
+- `python scripts/hand_checks.py`: round-1 hand-check numbers (needs the three panels)
+- `python scripts/evaluate.py`: model + baselines: tables in results/, H=6 plots
+- `python scripts/check_no_peeking.py`: leakage check: baseline inputs and model features
+- `python scripts/predict.py --at "2026-09-05 14:00" --all`: model at a past hour (needs models/)
+
+**News experiment (scripts/evaluate_news.py runs the four steps after the re-pull)**
+
+- `python scripts/check_gdelt_events.py`: gaps, heavy days, figures/gdelt_weekly.png (builds the panel if missing)
+- `python scripts/news_correlation.py`: news vs starts_7d / share_7d on training rows
+- `python scripts/evaluate_news.py`: 2026 model with and without news -> results/news/
+- `python scripts/check_no_peeking_news.py`: leakage check for the news columns
+
+**Telegram experiment (scripts/evaluate_telegram.py runs the parser check, the comparison and the leakage check)**
+
+- `python scripts/test_telegram_parser.py`: oblast parser and threat-flag tests
+- `python scripts/telegram_parser_check.py`: 50 random posts + substring traps -> results/telegram/parser_check_50.md
+- `python scripts/evaluate_telegram.py`: 2026 model with and without Telegram, lag 0 and 15 min -> results/telegram/
+- `python scripts/check_no_peeking_telegram.py`: leakage check for the Telegram columns
+
+**Re-pulling the data** (optional, needs network, replaces the snapshot in the repo; run only if you want new data)
+
+- `python scripts/fetch_data.py`: re-pull (overwrites data/raw/, updates PULL_INFO.md)
+- `python scripts/fetch_gdelt_events.py`: re-pull GDELT events, about 9 minutes, needs network -> data/news/
+- `python scripts/fetch_telegram_kpszsu.py`: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
 
 ## Definitions
 

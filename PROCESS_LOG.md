@@ -1538,3 +1538,95 @@ the main-side edits inside that one commit.
 - Python 3.11 and 3.12 were not re-run this round (they were in round 8; the Telegram line is untested there).
 - Main's results and figures were not touched by the merge commit: `git diff` of the commit against main's previous
   tip lists nothing in `results/` outside `results/telegram/`, and nothing in `figures/`.
+
+---
+
+## 2026-10-11 — Round 11 (main): zsh-safe README, plain-words output, README top for a cold reader
+
+Printed text and README only. No model, no result, no figure changed (check at the end).
+
+### 1. The quick start broke in zsh
+- **What happened (user's report):** pasted into zsh (the macOS default), the quick start ran nothing. Interactive zsh does
+  not treat `#` as a comment, so:
+  - `brew install libomp  # macOS only …` searched for a formula called "#" and printed ~8,000 lines, and the
+    backticks around `import lightgbm` ran `import` as a command;
+  - `pip install -r requirements.txt  # ~30 s` gave pip the arguments `#`, `~30`, `s`, and zsh expanded `~30` as a
+    directory-stack entry ("not enough directory stack entries").
+- **Cause:** my fault. I put comments, backticks and timings into the copy-paste blocks. bash and the Linux tests accept
+  them, so nothing I ran showed it.
+- **Fix:** every fenced block in the README now holds only commands. Timings and notes moved to a list under the block.
+  The brew line is a block of its own marked "macOS only". The Windows activation line is in the list. The README has
+  seven fenced blocks (quick start, brew, optional runs, the predict command, its output, Run order, Layout); none has
+  a `#` or a backtick.
+- **Also changed:** the venv line is `python3 -m venv .venv`, because stock macOS has no `python` before the venv exists.
+- **Found while doing it:** the Run order block held `fetch_data.py`, `fetch_gdelt_events.py` and
+  `fetch_telegram_kpszsu.py`. Once comment-free and "paste as it is", pasting the block would have re-pulled all
+  three sources and replaced the pinned snapshot. The three fetch scripts are out of the pasted block now; they are a
+  separate list marked as replacing the snapshot.
+- **Proof:** the README's Quick start blocks, taken verbatim from the committed README, were pasted into `zsh -i` (zsh 5.9, no rc
+  files, so `#` is not a comment, as on a Mac) as one stream, in the order a Mac user would paste them: the brew block,
+  the main block, the optional block.
+  - **Control first:** the two OLD lines (brew, pip) in the same setup reproduced the report exactly. The brew command
+    received 10 arguments including `#`; `import` ran as ImageMagick's screen-capture command; pip's line died with
+    "zsh: not enough directory stack entries".
+  - **New blocks:** the `brew install libomp` line (a stub on Linux) received exactly 2 arguments. The clone, venv,
+    `pip install`, `plot_weekly.py`, `evaluate.py`, `evaluate_news.py`, `evaluate_telegram.py` and `check_no_peeking.py`
+    all ran with no error and no warning (6 min 35 s in total). The summary printed in plain words.
+  - `git status` in that clone was empty: all tracked files in `results/` and `figures/` byte-identical (Python 3.13).
+  - Not a Mac: zsh ran on Linux, and `brew` is a stub. So it proves the pasted text parses and runs in zsh, not that
+    lightgbm loads on a Mac.
+  - Done on fa1b682. The commit was then amended once (below); the README text did not change.
+
+### 2. Output written for a user
+- **`evaluate.py` summary:** the numbers are the same, now with plain words: what the question is, what AUC and Brier
+  mean, and one sentence per H ("the model ranks risky hours inside an oblast at 0.688. The simple rules: same as now
+  0.438, same hour yesterday 0.525, train frequency 0.495. Brier …"), a Sep 4–5 sentence, the existing "Note" line, then
+  "Where to look": the full paths of `results/` and `figures/`, and three files to open first
+  (`results/test_table.md`, `figures/model_vs_baselines_h6.png`, `results/feature_importance.md`), plus the predict command.
+  `--verbose` still prints every table.
+- **Deviation from the example:** the example said "the best simple rule at 0.495". That is train frequency, but it is not
+  the best on within-oblast AUC at H=1: same hour yesterday has 0.525. So the text names all three simple rules
+  (which CLAUDE.md wants next to each model number anyway), not "the best".
+- **`predict.py`:** the first line is now one plain sentence, e.g. "Kharkivska, 17:00 Kyiv time on 5 Sep: 51% chance a
+  new alert starts within 1 hour, 87% within 3, 96% within 6. It did start, 22 minutes later." (the example said 50%; the
+  model's value is 0.505, which rounds to 51%). The detailed output follows as before.
+  - If no alert started in 6 hours, it says so and when the next one came; if the window is after the end of the data or
+    in the feed outage, it says it is not known. If the feed was down for part of the window, it adds that the real start
+    may be earlier.
+  - Hours in the training period add "this hour was part of the training data, so this is not a real forecast".
+  - `--all` gets a plain line too: the three oblasts with the highest chance within 1 hour, and how many did start.
+- **Experiments:** `evaluate_news.py` and `evaluate_telegram.py` now end with a short "Where to look" as well.
+
+### 3. The README top
+- New order: what this is (four plain sentences), the question, why new alerts, results as a small table (H, model, the
+  three simple rules, in words) with the two metric definitions, quick start, one predict example with what it means and
+  where files land, how this was built, contents. Data, targets, model, news and Telegram, limitations, run order,
+  definitions and layout are below, unchanged except Run order. The old "Usage" and "Flags" sections and the Status
+  lines are folded into the new top.
+- **Deviations, said before doing them (CLAUDE.md: say so first):**
+  - "Most alert-active hours are the current alert continuing" is true at H=1 only. From
+    `results/persistence_vs_target_a.md`: 67.5% at H=1, 50.1% at H=3, 41.6% at H=6. The README gives the three figures.
+  - The results table has all three simple rules, not "the best simple rule": the best one differs by metric and by H
+    (see above), and CLAUDE.md wants all three next to every model number.
+  - "The two leaks in the spec" are written as documented in the log: the frequency table over the last 4 weeks (it holds
+    each row's own outcome, or a future one) and the F1 threshold picked on a week the model was trained on. The second is
+    in-sample tuning more than a leak; the README says "picked on a week the model had been trained on".
+  - The "H=6 not established" bullet is unchanged.
+- **Figures:** the quick start now says tables in `results/` are byte-identical across the machines tried and figures can
+  differ slightly (fonts, matplotlib version), as the four PNGs do on Python 3.9.
+
+### Checks
+- **Amended once after the zsh test:** `predict.py` printed "the next came 281 h 26 min later" for a quiet hour; gaps of
+  two days or more now read "11 days 17 h". Only the `span()` helper changed (printed text). The final commit is
+  c0a8486; Python 3.9 below was run on it.
+- **Python 3.13 (zsh clone, fa1b682):** besides the paste, `test_telegram_parser.py` (56 + 17 cases) passed and
+  `predict.py` was run for one oblast, for a training hour and for `--all`; the clone stayed clean.
+- **Python 3.9.25 on c0a8486** (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0): fresh clone, fresh venv,
+  `plot_weekly.py`, `evaluate.py`, `evaluate_news.py`, `check_no_peeking.py`, `evaluate_telegram.py`,
+  `test_telegram_parser.py`, `predict.py`. Times in seconds: pip 20, plot 9, evaluate 82, news 106, no-peeking 23,
+  telegram 185, parser test 1, predict 5. All exit 0, no warning lines.
+  - Every table is byte-identical. The same four PNGs differ by a few pixels (matplotlib 3.9), as the README now says
+    in so many words: tables byte-identical, figures can differ.
+- **`results/` and `figures/` on main were not touched by this round:** `git diff` of the commit against the previous
+  tip lists nothing in either.
+- Python 3.11 and 3.12 were not re-run this round.

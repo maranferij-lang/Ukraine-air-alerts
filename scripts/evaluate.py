@@ -27,6 +27,7 @@ H), the train-frequency tables for target (b), and info.json with the data range
 import argparse
 import json
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -207,21 +208,41 @@ def model_label(name):
     return {"lgbm_2026_news": "LightGBM from 2026-01-01 + news"}.get(name, PREDICTORS.get(name, name))
 
 
+def where_to_look(files, extra=None):
+    """Print where the outputs are and which files to open first (files: [(relative path, why)])."""
+    lines = ["", "Where to look", f"  tables: {OUT}", f"  figures: {FIG}", "  open these first:"]
+    lines += [f"    {path}: {why}" for path, why in files]
+    if extra:
+        lines += ["  next:", f"    {extra}"]
+    print("\n".join(lines))
+
+
 def summary(res):
-    """Headline numbers: target (b), LightGBM next to the train-frequency baseline, all 24 test days
-    and Sep 4-5 alone, plus a note wherever any baseline beats LightGBM on within-oblast AUC."""
+    """What the headline numbers mean, in plain words: target (b), the model next to the three simple rules,
+    all 24 test days and Sep 4-5 alone, plus a note wherever any simple rule beats the model on within-oblast AUC."""
     b = res[res["target"] == "b_start"].set_index(["H", "predictor", "period"])
-    cell = lambda H, name, period: (f"{b.loc[(H, name, period), 'auc_within_oblast']:.3f} / "
-                                    f"{b.loc[(H, name, period), 'brier']:.3f}")
-    lines = ["", "Summary. Target (b) new alert starts in (t, t+H]; within-oblast AUC / Brier,",
-             "LightGBM vs the train-frequency baseline. All three baselines: results/test_table.md and",
-             "results/test_table_by_period.md.",
-             f"{'':6}{'all 24 test days':<34}Sep 4-5 only (7-day features scaled)"]
+    auc_ = lambda H, name, period="all": b.loc[(H, name, period), "auc_within_oblast"]
+    brier_ = lambda H, name, period="all": b.loc[(H, name, period), "brier"]
+    wrap = lambda text: textwrap.wrap(text, 100, subsequent_indent="      ")
+    lines = ["", "What the numbers say. The question: will a NEW alert start in an oblast within the next H hours?",
+             "Test: 24 days (Aug 7-28 and Sep 4-5), 24 oblasts, one model for all of them.",
+             "  AUC = how well the model ranks risky hours above quiet ones inside one oblast (0.5 = coin flip, 1.0 = perfect).",
+             "  Brier = how close the probabilities are to what happened (lower is better).", ""]
     for H in HORIZONS:
-        lines.append(f"H={H:<4}{cell(H, 'lgbm', 'all')} vs {cell(H, 'frequency', 'all')}      "
-                     f"{cell(H, 'lgbm', 'sep')} vs {cell(H, 'frequency', 'sep')}")
+        lines += wrap(f"H={H}: the model ranks risky hours inside an oblast at {auc_(H, 'lgbm'):.3f}. The simple rules: "
+                      f"same as now {auc_(H, 'persistence'):.3f}, same hour yesterday {auc_(H, 'yesterday'):.3f}, "
+                      f"train frequency {auc_(H, 'frequency'):.3f}. Brier: model {brier_(H, 'lgbm'):.3f}, "
+                      f"train frequency {brier_(H, 'frequency'):.3f}.")
+    lines += [""] + wrap("Sep 4-5 alone (48 origins per oblast, so noisy; the 7-day history is scaled from the hours the "
+                         "feed had): the model ranks at "
+                         + ", ".join(f"{auc_(H, 'lgbm', 'sep'):.3f}" for H in HORIZONS) + " for H = 1, 3, 6; train frequency at "
+                         + ", ".join(f"{auc_(H, 'frequency', 'sep'):.3f}" for H in HORIZONS) + ".")
     lines += baseline_notes(res, ["lgbm"], {"all": "on all 24 test days", "sep": "on Sep 4-5"})
     print("\n".join(lines))
+    where_to_look([("results/test_table.md", "every number next to the three simple rules"),
+                   ("figures/model_vs_baselines_h6.png", "the same comparison as a picture, for H = 6"),
+                   ("results/feature_importance.md", "what the model looks at")],
+                  extra='python scripts/predict.py --at "2026-09-05 14:00" --oblast Kyivska   (what the model said at one hour)')
 
 
 def main():
