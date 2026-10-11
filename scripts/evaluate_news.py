@@ -197,11 +197,11 @@ def main():
                   period=lambda d: d["period"].map(PERIODS))
     main_tab = res[res["period"] == "all"].drop(columns="period").assign(
         **{k: v for k, v in labels.items() if k != "period"})
-    note = (f"News experiment (branch news). Test origins: last {TEST_DAYS} days of official data from "
+    note = (f"News experiment (merged into main as a documented negative result). Test origins: last {TEST_DAYS} days of official data from "
             f"{test_start:%Y-%m-%d} UTC, minus rows whose [t-24h, t+H] touches the 2026-08-29..09-02 outage: 24 days "
             "(Aug 7-28, Sep 4-5), the same rows as main. Both 2026 models train on the same 2026 rows; '+ news' adds "
             "news_24h and news_yesterday (GDELT conflict events in Ukraine, national, by time added to GDELT, "
-            "lag 1h). Every row except '+ news' reproduces results/test_table.csv on main exactly. auc_within_oblast "
+            "lag 1h). Every row except '+ news' reproduces results/test_table.csv exactly. auc_within_oblast "
             "= mean of per-oblast AUCs (main number). Thresholds: max F1 on the last train week; 0/1 baselines as is. "
             "By period: test_table_by_period.md.\n\n")
     (OUT / "test_table.md").write_text(note + md_table(main_tab) + "\n")
