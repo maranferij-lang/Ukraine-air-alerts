@@ -187,9 +187,10 @@ def style(ax):
     ax.tick_params(colors=INK2)
 
 
-def baseline_notes(res, models, period_names):
+def baseline_notes(res, models, period_names, labels=None):
     """Lines naming every (model, period) where a baseline has the higher within-oblast AUC at some H,
-    so a summary that shows one baseline cannot hide a better one."""
+    so a summary that shows one baseline cannot hide a better one. labels: display names for model keys."""
+    label = lambda name: (labels or {}).get(name) or model_label(name)
     b = res[res["target"] == "b_start"].set_index(["H", "predictor", "period"])["auc_within_oblast"]
     notes = []
     for period, title in period_names.items():
@@ -198,7 +199,7 @@ def baseline_notes(res, models, period_names):
                 hs = [H for H in HORIZONS if b[(H, base, period)] > b[(H, model, period)]]
                 if hs:
                     notes.append(f"Note: {title}, {PREDICTORS.get(base, base)} has a higher within-oblast AUC than "
-                                 f"{model_label(model)} at H = {', '.join(map(str, hs))}.")
+                                 f"{label(model)} at H = {', '.join(map(str, hs))}.")
     return notes
 
 
