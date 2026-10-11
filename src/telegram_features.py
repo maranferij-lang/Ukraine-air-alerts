@@ -1,5 +1,6 @@
 """Per-oblast Telegram features from the Air Force channel (data/telegram/kpszsu_posts.csv).
 
+All-clear sentences ("Відбій загрози ...") are removed before matching oblasts and threat types.
 Leakage rule: a post counts at origin t only if its post time is strictly before e = t - lag, with
 lag = 0 ("posts published before t") or 15 minutes. Windows end at e and are half open [e - w, e).
 The text of an edited post is the text at pull time (edits keep the original time), see the README.
@@ -8,6 +9,7 @@ The text of an edited post is the text at pull time (edits keep the original tim
   tg_share6h       share of ALL posts in the last 6h before e that mention this oblast (NaN if no post)
   tg_min_since     minutes from the oblast's latest mention before e to t, capped at 1440 (24h)
   tg_ballistic, tg_cruise, tg_drone
+                   (cruise includes the channel's "КР"; drone includes loitering munitions)
                    0/1, national: a post of that threat type in the last 3h before e. These say what
                    kind of night it is, not which oblast. No raw national counts are used.
 """
@@ -23,10 +25,11 @@ POSTS_CSV = Path(__file__).resolve().parents[1] / "data" / "telegram" / "kpszsu_
 TG_FEATURES = ["tg_m1h", "tg_m3h", "tg_share6h", "tg_min_since", "tg_ballistic", "tg_cruise", "tg_drone"]
 THREATS = {
     "tg_ballistic": re.compile(r"балісти|іскандер|кинджал|циркон"),
-    "tg_cruise": re.compile(r"крилат|калібр|(?<!\w)х-?\d{2,3}(?!\w)|(?<!\w)ту-?\d{2,3}(?!\w)|стратегіч|ракетоносі"),
-    "tg_drone": re.compile(r"бпла|(?<!\w)дрон|шахед|шахід|герань|реактивн"),
+    "tg_cruise": re.compile(r"крилат|калібр|(?<!\w)кр(?!\w)|(?<!\w)х-?\d{2,3}(?!\w)|(?<!\w)ту-?\d{2,3}(?!\w)|стратегіч|ракетоносі"),
+    "tg_drone": re.compile(r"бпла|(?<!\w)дрон|шахед|шахід|герань|реактивн|баражуюч"),
 }
-SUMMARY_LEN = 300  # month-end tallies ("знищено понад ...") are long; they are not threat reports
+ALL_CLEAR = re.compile(r"[^.!?]*відбій[^.!?]*[.!?]?", re.I)  # an all-clear sentence is not a threat report
+SUMMARY = re.compile(r"збито/подавлено|знищено понад|^\W*протягом ")  # nightly and period tallies, not threat reports
 HOUR = np.int64(3600 * 10**9)
 CAP_MIN = 1440.0
 
@@ -37,9 +40,10 @@ def load_posts(path=POSTS_CSV):
     df["text"] = df["text"].astype(str)
     df["time"] = pd.to_datetime(df["time_utc"], utc=True, format="ISO8601")
     df = df.sort_values(["time", "id"], kind="stable").reset_index(drop=True)
-    df["units"] = [mentioned(t) for t in df["text"]]
-    low = df["text"].str.lower()
-    report = df["text"].str.len() <= SUMMARY_LEN
+    live = df["text"].map(lambda t: ALL_CLEAR.sub(" ", t))  # text with the all-clear sentences removed
+    df["units"] = [mentioned(t) for t in live]
+    low = live.str.lower()
+    report = ~low.str.contains(SUMMARY)
     for name, rx in THREATS.items():
         df[name] = low.map(lambda t: bool(rx.search(t))) & report
     return df
