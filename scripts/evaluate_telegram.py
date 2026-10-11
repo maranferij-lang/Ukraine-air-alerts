@@ -38,6 +38,7 @@ from src.metrics import best_f1_threshold, summarize
 from src.targets import touches
 from src.telegram_features import TG_FEATURES, load_posts, tg_features
 
+PULL_START = pd.Timestamp("2025-12-31", tz="UTC")  # scripts/fetch_telegram_kpszsu.py --since: every post from here on is in the csv
 LAGS = {"tg0": pd.Timedelta(0), "tg15": pd.Timedelta(minutes=15)}
 PREDICTORS = {"lgbm": "LightGBM full history (main)", "lgbm_2026": "LightGBM from 2026-01-01",
               "lgbm_2026_tg0": "LightGBM from 2026-01-01 + Telegram (posts < t)",
@@ -92,7 +93,7 @@ def main():
     lookback_complete = ~touches(rows, OFFICIAL_OUTAGES, before=pd.Timedelta(days=7), after=pd.Timedelta(0))
     day = rows["t"].dt.floor("D")
     from_2026 = rows["t"] >= POST_SWITCH_START
-    covered = rows["t"] - pd.Timedelta(hours=24) >= posts["time"].min()  # a full 24h of posts before t
+    covered = rows["t"] - pd.Timedelta(hours=24) >= PULL_START  # a full 24h of posts before t
 
     results, importance, splits, wins, boot, tree_counts = [], {}, {}, [], [], []
     for H in HORIZONS:

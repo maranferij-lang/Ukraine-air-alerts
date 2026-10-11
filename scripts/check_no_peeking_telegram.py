@@ -58,6 +58,8 @@ def main(verbose=True):
     test6 = split(rows, first, end, test_start, 6, pd.Timedelta(hours=24))["test"]
     origins = rows.loc[test6, "t"].drop_duplicates().sample(N_ORIGINS, random_state=0).sort_values()
     mism_trunc = mism_slow = ctrl_future = ctrl_future_possible = ctrl_lag = ctrl_lag_possible = checked = 0
+    ctrl_future_hit = ctrl_lag_hit = 0  # origins that had a relevant post in the extra minutes AND differ
+    relevant = posts["units"].map(len).gt(0) | posts[list(THREATS)].any(axis=1)  # a post that can change a column
     for t in origins:
         grid = rows[rows["t"] == t].reset_index(drop=True)
         pos = key.get_indexer(pd.MultiIndex.from_frame(grid[["oblast", "t"]]))
@@ -72,39 +74,47 @@ def main(verbose=True):
         # negative control 1: the lag-0 window moved to end 15 minutes AFTER t (posts from the future)
         future = tg_features(grid, posts, pd.Timedelta(minutes=-15)).to_numpy()
         base = full["lag 0"].to_numpy()[pos]
-        new_posts = int(((posts["time"] >= t) & (posts["time"] < t + pd.Timedelta(minutes=15))).sum())
+        new_posts = int((relevant & (posts["time"] >= t) & (posts["time"] < t + pd.Timedelta(minutes=15))).sum())
+        differs = bool((~same(future, base)).any())
         ctrl_future_possible += new_posts > 0
-        ctrl_future += int((~same(future, base)).any())
+        ctrl_future += differs
+        ctrl_future_hit += differs and new_posts > 0
         # negative control 2: lag 0 against lag 15 must differ when a post fell in [t-15min, t)
-        gap_posts = int(((posts["time"] >= t - pd.Timedelta(minutes=15)) & (posts["time"] < t)).sum())
+        gap_posts = int((relevant & (posts["time"] >= t - pd.Timedelta(minutes=15)) & (posts["time"] < t)).sum())
+        differs = bool((~same(full["lag 15min"].to_numpy()[pos], base)).any())
         ctrl_lag_possible += gap_posts > 0
-        ctrl_lag += int((~same(full["lag 15min"].to_numpy()[pos], base)).any())
+        ctrl_lag += differs
+        ctrl_lag_hit += differs and gap_posts > 0
 
     # sensitivity to edited posts: features of the lag-0 model without them, over all rows of 2026
     edited = posts["edited"].astype(str).str.lower().eq("true")
     sel = (rows["t"] >= pd.Timestamp("2026-01-01", tz="UTC")).to_numpy()
     no_edit = tg_features(rows[sel].reset_index(drop=True), posts[~edited].reset_index(drop=True), pd.Timedelta(0))
     ref = full["lag 0"][sel].reset_index(drop=True)
-    changed = (~same(no_edit.to_numpy(), ref.to_numpy())).mean(axis=0)
+    delta = np.abs(no_edit.to_numpy() - ref.to_numpy())
+    delta = np.where(np.isnan(no_edit.to_numpy()) != np.isnan(ref.to_numpy()), np.inf, np.nan_to_num(delta))
+    big = np.array([0.05 if c == "tg_share6h" else 0.5 if c != "tg_min_since" else 15.0 for c in TG_FEATURES])
+    changed = (delta > big).mean(axis=0)  # share6h: by more than 0.05; minutes: by more than 15; 0/1 columns: flipped
     test_posts = posts[(posts["time"] >= test_start)]
     n = N_ORIGINS * len(oblasts) * len(TG_FEATURES) * len(LAGS)
     lines = [
         f"origins: {N_ORIGINS} from {origins.min()} to {origins.max()} (same as check_no_peeking.py)",
         f"features rebuilt from posts published before t - lag only: {n} values, mismatches {mism_trunc}",
         f"independent slow implementation vs vectorized features: {n} values, mismatches {mism_slow}",
-        f"negative control, window ending 15 minutes after t: differs at {ctrl_future} of {N_ORIGINS} origins "
-        f"({ctrl_future_possible} origins had a post in [t, t+15min))",
-        f"negative control, lag 0 vs lag 15 min features: differ at {ctrl_lag} of {N_ORIGINS} origins "
-        f"({ctrl_lag_possible} origins had a post in [t-15min, t))",
+        f"negative control, window ending 15 minutes after t: differs at {ctrl_future} of {N_ORIGINS} origins; "
+        f"{ctrl_future_hit} of the {ctrl_future_possible} origins with a post that can change a column in [t, t+15min) differ",
+        f"negative control, lag 0 vs lag 15 min features: differ at {ctrl_lag} of {N_ORIGINS} origins; "
+        f"{ctrl_lag_hit} of the {ctrl_lag_possible} origins with such a post in [t-15min, t) differ",
         f"posts marked edited: {int(edited.sum())} of {len(posts)} ({edited.mean():.1%}); in the test window "
         f"{int(test_posts['edited'].astype(str).str.lower().eq('true').sum())} of {len(test_posts)}",
-        "share of 2026 rows whose value changes if edited posts are dropped (lag 0): "
+        "share of 2026 rows whose value changes materially if edited posts are dropped (lag 0; share6h by >0.05, minutes by >15, 0/1 flipped): "
         + ", ".join(f"{c} {v:.2%}" for c, v in zip(TG_FEATURES, changed)),
     ]
     if verbose:
         print("\n".join(lines))
     assert mism_trunc == 0 and mism_slow == 0
-    assert ctrl_future > 0 and ctrl_future == ctrl_future_possible and ctrl_lag > 0
+    assert ctrl_future_possible > 0 and ctrl_future_hit == ctrl_future_possible  # every origin with a new post must differ
+    assert ctrl_lag_possible > 0 and ctrl_lag_hit == ctrl_lag_possible
     out = ROOT / "results" / "telegram" / "no_peeking.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n")
