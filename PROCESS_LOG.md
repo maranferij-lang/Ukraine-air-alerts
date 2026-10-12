@@ -1710,3 +1710,64 @@ minutes; if over, stop and do not commit (it was not over, see the times at the 
   `source_check.md` and the README explain). The files state the measured numbers.
 - **Time:** started 16:35 UTC, committed locally 16:38, checks finished 17:10 (the two long checks ran at the same time at
   first and slowed each other; I paused one until the other finished), pushed before 17:20, inside the 45 minutes.
+
+---
+
+## 2026-10-12 — Round 13 (main): shorter README, and the model shown working
+
+**Request (user):** last round, hard stop 21:10 Kyiv time (18:10 UTC); if not done and tested by then, stop and do not commit.
+The README (625 lines) is too long for a reviewer, and nobody sees how it works without running it. Started 17:27 UTC.
+No model, data or result changes: `results/` byte-identical.
+
+### 1. README cut, details moved
+- **README.md: 625 → 115 lines.** Kept: what this is, results (table, metric lines), quick start, try it (with the `--now` line),
+  how this was built (the rules, where the checks caught mistakes), a five-bullet limitations list, a link to the details.
+  Status line now "final (round 13)".
+- **docs/DETAILS.md** (new, 537 lines): everything else, moved verbatim: Contents, Data (with the evaluation window and the
+  western-oblast definition), Targets / baselines / evaluation, Model, News and text data (GDELT and Telegram), the full
+  Limitations and next steps, Run order, Definitions, Layout. A diff of the old README's lines from "## Data" on against the
+  new file shows only three differences, all additions for the new script: `plot_timeline.py` in the run-order block, its
+  bullet in the run-order list, and the end-of-file newline. Two lines of introduction were added at the top of the file
+  (a link back to the README; paths are relative to the repo root).
+- **Links:** the README's Contents list moved with its sections, so its anchors still point inside the same file. In the README
+  I added links to `docs/DETAILS.md` (and its sections); the Telegram line in the results now links to the News and text data
+  section. A script resolved every markdown link, anchor (GitHub's slug rule) and image path in both files: 0 problems.
+- **Five limitations bullets** are taken from the full list (western oblasts, Sep 4–5, the feed stop, the raion switch,
+  thresholds). Not in the five, still in the details: the Volunteer-vs-official κ drop (unexplained, not speculated about here),
+  and the "next" list. The H=6 "not established" note stays in the results block, where the number is.
+- Code blocks: README has 5, DETAILS has 2; none contains `#` or a backtick.
+
+### 2. Showing it working
+- **scripts/plot_timeline.py → figures/forecast_timeline.png (+ .csv with the numbers behind it).** Uses the saved models/
+  (`evaluate.py` writes them) and does not refit or write into `results/`. The probabilities come from the saved H=1 LightGBM
+  on the same full-data features `evaluate.py` scores the test set with (the `check_no_peeking.py` results say these equal the
+  known-at-t features); the script asserts that every hour shown is a scored test row. Two panels (Kharkivska, Kyivska), x =
+  hour in Kyiv time, line = the model's chance of a new alert in the next hour, orange triangle = exact start of an alert that
+  really started, light grey = hours when an alert was already running (the "now" column). Same palette, fonts and `style()`
+  as `evaluate.py`'s figures.
+- **Window chosen:** 24–28 Aug 2026 (UTC days), i.e. 5 of the 24 test days, picked by a rule that is in the script: the
+  5-day window inside Aug 7–28 with the most alert starts in the less active of the two oblasts, earliest first. Counts:
+  Kharkivska 42, Kyivska 25 new alerts. (Kyivska is the oblast around Kyiv; Kyiv City is a separate unit.) Both have alerts;
+  I did not look at other windows to find a nicer picture. Note that this is the busiest end of August, not a typical week.
+- **README:** the timeline sits under "Try it"; `model_vs_baselines_h6.png` and `reliability_h6.png` sit under Results, each
+  with one plain sentence on what to look at. The sentences contain no numbers (so none are retyped from the figures).
+  `plot_timeline.py` is the last line of the quick start block (optional, about 10 s, listed under the block).
+
+### Checks
+- `results/` byte-identical: sha256 of every file under `results/` before and after the round are the same; the only changes
+  are the new files `docs/DETAILS.md`, `scripts/plot_timeline.py`, `figures/forecast_timeline.png` and `.csv`, and the
+  edited `README.md` and `PROCESS_LOG.md`. The four existing figures were not touched.
+- **Links and code blocks:** every markdown link, anchor and image path in `README.md` and `docs/DETAILS.md` resolves
+  (0 problems); no code block in either file contains `#` or a backtick.
+- **zsh paste test** (zsh 5.9, `zsh -f -i`, the README's own blocks pasted in order: `brew install libomp` (stub), clone, venv,
+  `pip install`, `plot_weekly`, `evaluate`, `plot_timeline`, `evaluate_news`, `evaluate_telegram`, `check_no_peeking`, the two
+  `predict` lines): no zsh error, no warning, `plot_timeline.py` printed its window line, `git status` empty (so the
+  regenerated `forecast_timeline.png` and `.csv` equal the committed ones byte for byte on this machine).
+- **Fresh clone** of the committed `main` (Python 3.13.16, pandas 3.0.6, numpy 2.5.4, lightgbm 4.7.0, matplotlib 3.11.2): the quick
+  start, then `plot_timeline` (9 s), `evaluate_news`, `check_no_peeking`, `evaluate_telegram`, `test_telegram_parser`,
+  both `predict` lines, `pip install translitua`, `source_check.py`: every step exit 0, 0 warnings, `git status` empty.
+  The earlier run in the same session had the two long checks running at once and it was far slower; this time they ran one
+  after the other (`evaluate.py` 79 s alone).
+- **Not checked this round:** Python 3.9 and a Mac (nothing in `plot_timeline.py` is version-specific, but I did not run it
+  there); the figure may differ by a few pixels across matplotlib versions, as the other figures do.
+- **Time:** started 17:27 UTC, committed locally 17:31, tests finished 17:45, pushed before 18:10, inside the limit.
