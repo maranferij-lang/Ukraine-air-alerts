@@ -20,6 +20,7 @@ New alert within H hours, test window of 24 days. Each cell is within-oblast AUC
 - **Brier** is how close the probabilities are to what happened: lower is better.
 - **Data:** official alerts from Vadimkin/ukrainian-air-raid-sirens-dataset, upstream commit `7ccd436`, pulled 2026-10-10 (re-pulled 18:58 UTC, unchanged). The official feed ends 2026-09-07.
 - **Test window:** the last 30 days of official data (2026-08-07 → 09-05), minus the Aug 29 – Sep 2 feed outage and Sep 3 (24h lookback). That leaves 24 days: the most recent official data we trust.
+- **Data currency:** we re-derived the official data from its source channel and it matched (854 of 855 alerts in a 3-day check, 0 of 1,440 oblast-hours differ; `results/source_check.md`). The channel stopped on 2026-09-07 06:09 UTC, so no newer official data exists, and the test window ends Sep 5 because of that, not by our choice.
 - **Same, Sep 4–5 alone (7-day features scaled from observed hours):** H=1 0.534 / 0.098 vs 0.466 / 0.119 · H=3 0.476 / 0.158 vs 0.424 / 0.218 · H=6 0.447 / 0.120 vs 0.409 / 0.203. Note: on Sep 4–5, same hour yesterday has a higher within-oblast AUC than LightGBM at H = 1, 3, 6.
 - **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
 - **Telegram (separate experiment, not in the model above):** posts of the Air Force channel help only when they are minutes old, so they are a nowcasting signal, not a forecasting one; numbers next to the baselines in "News and text data". The main model stays the full-history LightGBM without Telegram.
@@ -70,6 +71,7 @@ new alert within model  same as now  same hour yesterday train frequency happene
 - **The first line is the answer in words** (the time is Kyiv time; `--at` is UTC unless you add an offset such as `+03:00`). The table under it has the same probabilities next to the three simple rules and what happened. "happened" is yes in all three windows.
 - The model only sees what was known at that hour. For any hour before 2026-08-07 the model was trained on that period, so the output says so: it is not a forecast.
 - Other forms: `--all` instead of `--oblast` gives every oblast in one table; `--at "2026-09-05 17:00+03:00"` writes the same hour in Kyiv time. Oblast names are as in the data, without "oblast", in any case, or any unique start: `Kharkivska`, `Kyiv City`, `Lviv` (`Kyiv` alone is ambiguous). Any hour from 2022-03-16 to 2026-09-05 is allowed.
+- `--now` instead of `--at` checks the official channel for newer data. Today there is none (the channel stopped on 2026-09-07), so it says so in one sentence and shows the forecast for the latest hour we have, 2026-09-05 23:00 UTC, labelled as not now. If the channel cannot be reached it says that instead. There is no other fallback.
 - It needs `models/`, which `evaluate.py` writes; without them it says to run `evaluate.py` first. Files land in the repo folder: tables in `results/`, pictures in `figures/`, models in `models/`.
 - `evaluate.py --verbose` also prints every table; they are all in `results/` anyway.
 
@@ -112,8 +114,17 @@ has two feeds, official and volunteer. Times are UTC.
   from 0.985 in 2022Q3 to 0.448 in 2026Q3. The Lviv/Volyn parser bug described below accounts
   for about 0.025 of that drop. The rest is unexplained.
 
+**Where the official data comes from, and why it stops.** The official feed is built by an upstream script that reads the state
+alert channel on Telegram (`air_alert_ua`) and turns each message into an alert row. We ran that same script, unchanged, on the
+channel's public posts for Aug 14–16 and compared the result with our csv: 854 of 855 alerts match to the second (the 855th is
+an alert still running at the edge of the slice), and none of the 1,440 oblast-hours disagree. So the data is what the channel
+says (`results/source_check.md`). The channel's last post is from 2026-09-07 06:09 UTC. We checked in three ways (no post after
+that number, the same last page when asking for later ones, and "Post not found" for the next number), and the same method
+returned fresh posts from another channel, so it is not a stale page. There is no newer official data to add, and that is why
+the test window ends on Sep 5. It was not our choice.
+
 Known problems, handled in `src/load.py`:
-- The official feed ends 2026-09-07 ~05:40 UTC.
+- The official feed ends 2026-09-07 ~05:40 UTC (the channel itself stops at 06:09, see above).
 - No official messages 2026-08-29 → 2026-09-02. These hours are masked.
 - 38% of official rows are upstream duplicates. They are dropped.
 - The last day of each file is incomplete, because alerts still open at the pull are missing. It is cut.
@@ -121,7 +132,7 @@ Known problems, handled in `src/load.py`:
 ### Evaluation window: the most recent trustworthy data
 The test period is the **last 30 full days of official data: 2026-08-07 00:00 → 2026-09-05 23:00
 UTC**. Usable test days: **24**, i.e. Aug 7–28 and Sep 4–5. The same rows are used for every
-predictor.
+predictor. The window ends on Sep 5 because the official source stopped on Sep 7; we did not cut it.
 - Rows whose [t−24h, t+H] touches the 2026-08-29 → 09-02 outage are dropped. That removes
   Aug 29 – Sep 3.
 - Sep 3 is dropped because the same-hour-yesterday baseline would point into the outage. One
@@ -506,6 +517,9 @@ python scripts/hand_checks.py
 python scripts/evaluate.py
 python scripts/check_no_peeking.py
 python scripts/predict.py --at "2026-09-05 14:00" --all
+python scripts/predict.py --now --oblast Kharkivska
+pip install translitua
+python scripts/source_check.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -526,6 +540,9 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/evaluate.py`: model + baselines: tables in results/, H=6 plots
 - `python scripts/check_no_peeking.py`: leakage check: baseline inputs and model features
 - `python scripts/predict.py --at "2026-09-05 14:00" --all`: model at a past hour (needs models/)
+- `python scripts/predict.py --now --oblast Kharkivska`: checks the official channel for newer data; there is none, so it says so and shows the latest hour we have
+- `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
+- `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
 
 **News experiment (scripts/evaluate_news.py runs the four steps after the re-pull)**
 
@@ -597,6 +614,7 @@ src/news.py          national GDELT news features (the news experiment)
 src/telegram_*.py     Telegram post parser (oblasts, threat types) and per-oblast features (the Telegram experiment)
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features
 data/news/           GDELT hourly aggregate + pull record (the news experiment)
+data/source_check/    public posts of the official alert channel for Aug 13–18 (compressed), for results/source_check.md
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
 scripts/             one script per step, run from the repo root

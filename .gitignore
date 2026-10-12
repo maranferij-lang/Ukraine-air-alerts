@@ -14,3 +14,6 @@ models/
 
 # telegram: raw page cache of scripts/fetch_telegram_kpszsu.py
 data/telegram/cache/
+
+# upstream parser files fetched by scripts/source_check.py
+data/source_check/upstream/

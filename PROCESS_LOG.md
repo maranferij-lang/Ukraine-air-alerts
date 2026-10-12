@@ -1630,3 +1630,83 @@ Printed text and README only. No model, no result, no figure changed (check at t
 - **`results/` and `figures/` on main were not touched by this round:** `git diff` of the commit against the previous
   tip lists nothing in either.
 - Python 3.11 and 3.12 were not re-run this round.
+
+---
+
+## 2026-10-12 — Round 12 (main): the official source channel, and why "now" is not available
+
+**Decision (user):** option A from the scouting, "nothing more". No API token came and the deadline is tonight. Hard limit 45
+minutes; if over, stop and do not commit (it was not over, see the times at the end). Round 11's untouched rule stands:
+`results/` byte-identical.
+
+### Why (the scouting, 2026-10-11 17:28–17:43 UTC; scratch work only, nothing in the repo)
+- The user wanted `predict.py` to take "now" and the test window to end at the pull, by reading the official source ourselves.
+  The source of the official feed is the public Telegram channel `air_alert_ua` (the upstream script
+  `processors/official_channel_processor.py` turns its messages into alert rows).
+- **The channel loads and pages back** (`t.me/s/air_alert_ua?before=<id>`, 20 posts a page). About 585 posts a day
+  (post 320000 on Aug 6 to post 338380 on Sep 7: 18,380 posts in 31.4 days). A pull of Aug 1 to the end would be about
+  21,700 posts, 1,085 pages, 60–76 minutes at the pace seen (4.2 s a page with connection resets).
+- **The channel stopped:** the newest post is 338380 at **2026-09-07 06:09:04 UTC**, in the middle of an alert wave, no
+  all-clear after it. Three checks agree: `?after=338380` returns no posts; `?before=999999` returns the same last page; a
+  direct link to post 338381 says "Post not found". The preview is not stale in general: the same method returned fresh posts
+  of `kpszsu` the same day. The description does not mention a move. So there is no newer official data than the upstream
+  feed, which stopped the same day.
+- **No format change** before the stop: the same templates (🔴 start, 🟢 all-clear, 🟡 partial all-clear, 🔴🔴 / 🟠 notices) on
+  Aug 6, Sep 2 and Sep 7.
+- **The upstream parser** was ported by running it unmodified: `OfficialAirAlertProcessor` and `states.json` from the pinned
+  upstream commit `7ccd436`; only the Telethon import is stubbed, and messages are shaped like Telethon's (text, UTC date, id)
+  and fed in id order. It skips 321 of 3,280 posts (298 🟠 warnings and 23 other notices), no unknown hashtag.
+- **Validation** on 3 days of starts (Aug 14–16; the full Aug 1–28 would have been about 45 minutes of pulling, so it was not
+  done): 854 of the 855 rows of our cleaned csv are reproduced to the second; the one other row is a Marhanets alert that ends
+  on Aug 19, after the posts I pulled stop (Aug 18 19:00): an edge of the slice. Nothing in the channel is missing from the csv.
+  Over 1,440 oblast-hours (the series the model uses) **0** disagree, and both show 139 alert starts.
+- So the source is the right one; it just has nothing after Sep 7.
+
+### What was built (A)
+1. **`scripts/source_check.py` → `results/source_check.md`**: the comparison and its output. It downloads the four upstream
+   files at the pinned commit into `data/source_check/upstream/` (git-ignored; their SHA-256 are in the output; not vendored,
+   so no upstream code is copied into the repo) and runs them over the committed posts. It needs one extra package,
+   `translitua` (the upstream parser's own dependency, for the English names). Output is deterministic (run twice, identical).
+   The "channel stopped" paragraph in the output is a hand-recorded, dated note (it cannot be reproduced offline).
+2. **`data/source_check/channel_posts_aug13_18.csv.gz`**: the 3,280 public posts of Aug 13–18 that the check uses (id, UTC
+   time, text), 60 KB compressed. The raw pages are not committed.
+3. **README:** a plain-words paragraph in "Data" (we re-derived the official data from its source and it matched; the channel
+   stopped on 2026-09-07 06:09 UTC, three checks; no newer official data; that is why the test window ends Sep 5, not our
+   choice); one line in "Results"; one sentence in the evaluation window section; a "Try it" bullet for `--now`; Run order and
+   Layout lines. Code blocks stay comment-free.
+4. **`predict.py --now`:** one request to the channel's public page (10 s timeout, one retry), then one plain sentence and the
+   forecast for the latest hour we have (2026-09-05 23:00 UTC, "which is not now"). Three outcomes, all tested:
+   - nothing newer: "The official alert channel has posted nothing since 2026-09-07 06:09 UTC, which is where our data ends
+     too, so no newer official data exists; here is the forecast for the latest hour we have …";
+   - channel unreachable (tested with a dead proxy): "Could not reach the official alert channel (network error) …";
+   - the channel has posts newer than the snapshot (not the case today; tested by calling the function with fake times):
+     "… cannot turn live posts into forecasts yet …". It does not crash and builds nothing from live posts.
+   No volunteer-feed fallback and no API code anywhere.
+   - **"Newer" rule:** the channel's last post (06:09) is 41 minutes after the last row of our csv (05:28 start), because the
+     csv holds only alerts that have ended and the channel's last posts open alerts that never got an end. So "newer" means
+     more than 2 hours after our last row, not any later post. Without that margin the dead channel would look "newer".
+   - `--now` and `--at` are mutually exclusive; one of them is required.
+
+### Not done on purpose (options B and C of the scouting)
+- A live path that pulls the last 8 days and builds features from them (it could only be tested by replay, and there is nothing to
+  run it on today).
+- Moving the data end to Sep 6 (one more full day).
+- A longer validation than Aug 14–16.
+
+### Checks
+- **Fresh clone** of the final commit (Python 3.13.16, pandas 3.0.6, numpy 2.5.4, lightgbm 4.7.0), the whole run order:
+  `plot_weekly`, `evaluate`, `evaluate_news`, `check_no_peeking`, `evaluate_telegram`, `test_telegram_parser`, `predict --at`,
+  `predict --now`, then `pip install translitua` and `source_check.py`: every step exit 0, 0 warnings. `git status` empty
+  afterwards: `results/` and `figures/` byte-identical to the commit, and `results/source_check.md` regenerated unchanged
+  (also identical on two runs in the working tree). `results/` differs from round 11 only by the new `results/source_check.md`.
+- **zsh paste test** (zsh 5.9, `zsh -f -i`, stdin paste of the README quick start blocks: clone, venv, `pip install`,
+  `plot_weekly`, `evaluate`, `brew install libomp` (stub), `evaluate_news`, `evaluate_telegram`, `check_no_peeking`, the two
+  `predict` lines of "Try it"): no zsh error (no "command not found", "no matches" or parse error), output of the `--at` example
+  equals the README block, `--now` prints the one-sentence notice and the Sep 5 23:00 UTC forecast, `git status` empty.
+  README fenced blocks: 7, none with `#` or a backtick.
+- `predict.py --now`: nothing newer (real channel), dead proxy ("Could not reach the official alert channel (network error)"),
+  and `--now` with `--at` (argparse error). The "newer posts" branch only by calling the function with fake times.
+- **Note on wording:** the request said "854 of 854 alerts match"; measured is 854 of 855 (the 855th is the edge row, which
+  `source_check.md` and the README explain). The files state the measured numbers.
+- **Time:** started 16:35 UTC, committed locally 16:38, checks finished 17:10 (the two long checks ran at the same time at
+  first and slowed each other; I paused one until the other finished), pushed before 17:20, inside the 45 minutes.
