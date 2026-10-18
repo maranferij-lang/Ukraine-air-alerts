@@ -2033,3 +2033,19 @@ patched copy mixes the two sources (the API's alerts added to the official ones)
 **Open, for the user:** (a) confirm the forward test scores with **no outage mask** (recommended: the API observed those hours); (b) go for `--score`; (c) optional: the old-window
 equivalence test (the frozen models on API-source features for Aug 7-28) needs the API archive back to about Jul 1 (4 weeks of lags before Aug 7): one more backfill
 (`archive_api.py --from 2026-07-01 --to 2026-08-05`, about 36 days); not required for the forward test.
+
+### Decision (2026-10-18, before scoring): the forward test uses no outage mask; a masked run is reported as secondary
+**User's decision:** the forward test builds its features from the API archive **with no outage mask**. The mask in `src/features.py` exists only because the official feed had no data
+for 2026-08-29..09-02; the API does have data for those days, so masking would throw away observed data. The main result is therefore the unmasked one (`outages=[]`). As a side note
+the test is also scored once with the official mask switched on, reported next to the main result and labelled secondary (it is not the result).
+Also decided: baselines as in CLAUDE.md (same as now, same hour yesterday, train frequency) plus the logistic model and the rolling 4-week frequency as extras; thresholded metrics stay at the
+frozen thresholds; nothing is refitted or retuned; the Jul 1 - Aug 5 backfill is skipped for now.
+
+**Declared before scoring: how calibration-in-the-large and the Brier change will be reported** (the forward rows have a higher base rate: the diagnostics showed 0.180 vs 0.121 at H=1).
+- Calibration-in-the-large per horizon and predictor: mean predicted probability against the observed rate. Exactly, Brier = (mean predicted - observed)^2 + Var(p - y), so the squared
+  bias is the part of the Brier score that is calibration-in-the-large; its share of the Brier is reported.
+- The change of the LightGBM Brier from the old test to the forward test (old rows re-scored with the same frozen artifacts, which reproduces `results/calibration.md`) is split with the
+  Murphy decomposition already used in `results/calibration.md`: uncertainty = base(1-base) (what a higher base rate does to ANY forecaster's Brier), reliability (miscalibration),
+  resolution, residual; and the squared bias is shown next to them. How much of the change is the base-rate level is read off the uncertainty term (and, for the model itself, the bias).
+- The same table for train frequency, so the model's Brier change can be read against a predictor that does not adapt.
+- Not done to "fix" anything: no recalibration, no threshold moved, no refit.
