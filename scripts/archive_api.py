@@ -11,7 +11,7 @@ What is written (answers are saved as the API sent them, plus one line per call 
   data/api_archive/active/active_<UTC time>.json  /api/v3/alerts at the moment of the run (daily mode only)
   data/api_archive/regions/regions_<UTC date>.json  /api/v3/regions, only when it differs from the newest saved copy
   data/api_archive/log.csv                      fetched_at_utc, endpoint, date, http_status, items, bytes (no token, no headers)
-Calls are at least 2.5 s apart; HTTP 429 waits and retries. Stops on 401/403 (token refused or blocked) and after repeated 429.
+Calls are at least 6 s apart at first; HTTP 429 waits (Retry-After if sent), slows the pace down and retries. Stops on 401/403 (token refused or blocked) and after repeated 429.
 What to commit is your call: the files are plain JSON.
 """
 import argparse
@@ -129,7 +129,7 @@ def main():
             f.write_bytes(raw)
             fetched += 1
             print(f"{d}: {n} alerts saved")
-    print(f"{mode}: {fetched} days saved, {skipped} already there, {kept} kept, {failed} failed; {c.calls} requests, {c.n429} x HTTP 429")
+    print(f"{mode}: {fetched} days saved, {skipped} already there, {kept} kept, {failed} failed; {c.calls} requests, {c.n429} x HTTP 429, gap now {c.gap:.1f} s")
     if fatal:
         return stop(fatal)
     return 1 if failed else 0

@@ -3,7 +3,7 @@
     export UA_ALARM_TOKEN=...        (in your shell; the script reads it from there and from nowhere else)
     python scripts/api_probe.py
 
-About 20-25 requests, at least 2.5 s apart (the swagger names no rate limit). It prints only status codes, counts, region
+About 20-45 requests, at least 6 s apart and slower after any HTTP 429 (the swagger names no rate limit). It prints only status codes, counts, region
 names and the earliest/latest timestamps it saw, never the token, and writes the raw answers to data/api_raw/ (git-ignored).
 
 1. /api/v3/regions        the id tree; how many states / districts / communities; which of our 25 oblasts are matched by name
@@ -154,7 +154,8 @@ def main():
             lo, hi = (lo, mid) if (s == 200 and n > 0) else (mid, hi)
         earliest, exact = hi.strftime("%Y-%m-%d"), True
     print("\nPROBE SUMMARY (safe to paste: no token in it)")
-    print(f"  requests made: {c.calls}; HTTP 429 seen: {c.n429}")
+    print(f"  requests made: {c.calls}; HTTP 429 seen: {c.n429}; Retry-After values seen (s): {sorted(set(c.retry_after_seen)) or 'none sent'}; "
+          f"gap at the end: {c.gap:.1f} s")
     for name, s, text in summary:
         print(f"  {name}: HTTP {s}: {text}")
     print(f"  dateHistory: earliest date with data: {earliest}" + (" (found by bisection, exact if data is continuous)" if exact

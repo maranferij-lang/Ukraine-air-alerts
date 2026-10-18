@@ -1903,3 +1903,42 @@ real history depth, the real rate limit.
 
 **Open:** the probe output from the user's Mac decides the consistency check (a real overlap with the official data or a sanity check only) and
 the forward test.
+
+### Update (2026-10-18, later): probe output from the user's Mac, and a first real consistency check (one day)
+**Probe result (user's run, 43 requests, 21 of them HTTP 429; token never seen):**
+- `/regions`: 1,606 nodes, 29 states, **25 of our 25 oblasts matched by name** (the name map in `src/ukrainealarm.py` works).
+- **History depth:** `dateHistory` returns data from **2025-10-03** (2025-10-02 and everything before it is empty, HTTP 200 with 0 items; the
+  bisection is exact if the data is continuous). About one year back, so it **does** cover our late-Aug / early-Sep overlap, the official feed's
+  outage (2026-08-31: 494 items) and everything after the feed's end (2026-09-07 to today).
+- **Rate limit:** real. 21 of 43 requests got 429 at the 2.5 s pacing (the probe did not record Retry-After). Fixed in `src/ukrainealarm.py`:
+  the pace now starts at 6 s, honours Retry-After, slows down after a 429 (x1.5, at most 60 s) and speeds up again after 10 clean calls; the probe
+  and the archive print the Retry-After values and the final gap. Tested offline only (a 429 with Retry-After 1 s raised the gap, 10 clean calls lowered it).
+- **What a day file is:** `dateHistory` for a UTC day returns every alert that was **active** on that day: on 2026-08-15, 399 items, 362 started on
+  the day and 37 the day before, none after; the latest end seen was 2026-08-16. Times are UTC with a `Z` and microseconds; `isContinue` was false for all.
+- **Levels:** on 2026-08-15, 20 State, 369 District and 10 Community items (the same shape on 08-31, 09-05, 10-17). Looking at the saved day, the
+  State-level items are all `м. Київ` (no oblast-wide record for any other oblast): an oblast-wide alert comes as a set of districts, as in our own
+  rows. Communities are city hromadas (Kharkiv, Nikopol, Zaporizhzhia). Alert types: AIR 396, ARTILLERY 3 (09-05 also one URBAN_FIGHTS).
+- **Mapping without the region tree:** all 82 district names of that day turn into one of our 118 raion names with `translitua` (the package the
+  upstream parser uses): 82 of 82, and each of our raion names belongs to one oblast, so the tree is not needed. Hromada-level records are dropped, as
+  `src/panel.py` already does.
+
+**`scripts/api_check.py` (new): the consistency check, same idea as `source_check.py`.** Offline, from the saved day files. Rules: AIR only;
+district -> raion row, `м. Київ` / `... область` -> oblast row, hromada dropped; the same 118-raion list, half of the raions, restarts under 5 minutes
+joined, the same `official_episodes` and `hourly_panel` code for both sides. Compares oblast-hours (under alert; a new alert starts in the hour),
+oblast episodes (start within 1 min / 5 min / 1 h) and raion alert rows (same raion, start within 5 s / 60 s, end within 60 s), on the days that
+have a file, outside the official outage and before the official trusted end. Writes `results/api_check.md`.
+- **First real run, one day (2026-08-15, the only day pushed):** oblast-hours 576 compared, **576 of 576 same "under alert", 576 of 576 same
+  "a new alert starts in the hour"**; oblast episodes 67 official / 67 API, 66 of 67 starts within 1 minute, 67 of 67 within 5 minutes; raion rows
+  336 / 336, **330 of 336 official rows have an API row of the same raion with a start within 5 s**. The 6 others are one batch (Kherson, Beryslav,
+  Skadovsk, Kakhovka, Henichesk raions at 01:16:04 and Bashtanka at 01:16:08 UTC) where the API's start is 98-133 s earlier. Of the 330 matched rows,
+  327 also have an end within 60 s; the other 3 (Lozova, Konotop, Dnipro raions) end 213-253 s earlier in the API.
+- **Controls (a copy of the day, not kept):** with 7 districts removed, 557 of 576 oblast-hours agree (episodes 57 vs 67); with every time shifted by
+  25 minutes, 536 of 576 (raion rows matched within 60 s: 1). So the comparison does react to differences.
+- **Caveats:** one day is not the late-Aug / early-Sep check; 576 oblast-hours is a small sample. The two sources are probably not independent (the
+  API says it takes the official channel among its sources); the agreement shows our rules are applied the same way to both and that the API's rows are
+  the same alerts, not that either is right about the real world. `results/api_check.md` as committed is this one-day run and is regenerated
+  when more days are saved.
+
+**Next, for the user to run:** a backfill into `data/api_archive/` (resumable) and commit it, then the check over the full late-Aug / early-Sep
+window (and, if we go on, the forward test from Sep 7). Nothing else was run against the real API by me. Step 3 (forward test) is not started:
+the user asked to stop after step 2.
