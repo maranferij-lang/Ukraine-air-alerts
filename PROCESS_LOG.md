@@ -1839,3 +1839,13 @@ Nothing run on data, no code added; this entry is the only change on `live` so f
      let through from this IP; the user's own test (200) came from another network. I did not try to get around the challenge.
 - **So the swagger has not been read.** Nothing in this log about the Ukraine Alarm API's endpoints, limits or history depth is known yet;
   I have not filled the gap from memory.
+
+### Update (later still): the pushed "swagger" is the Cloudflare challenge page
+- New setup from the user: I write the code, the user runs everything that touches the API on their own machine; the token stays there in
+  `UA_ALARM_TOKEN` and I never see it. The user pushed `docs/api/ukrainealarm_swagger.json` (commit 1aa8449) to `live`.
+- **That file is not the swagger.** It is 5,490 bytes of HTML whose title is "Just a moment..." (the Cloudflare browser challenge; same size
+  as the 403 pages I got from the sandbox). It is not valid JSON (the parse fails at character 0). So the endpoints, auth format, region
+  ids, raion level, rate limits and history endpoints are **still unknown**.
+- Not done on purpose: `scripts/api_probe.py` and `scripts/archive_api.py`. Their paths, parameters and response fields would be guesses,
+  and a probe that guesses the history call could waste rate-limited requests or save the wrong thing. They are written once the real
+  swagger is here. The wrong file is left in place for the user to replace (it is their commit).
