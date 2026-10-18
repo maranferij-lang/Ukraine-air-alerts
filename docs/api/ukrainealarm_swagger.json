@@ -1,1 +1,806 @@
-<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=Edge"><meta name="robots" content="noindex,nofollow"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="content-security-policy" content="default-src &#39;none&#39;; script-src &#39;nonce-N4llNmsleASQfK5uEByMM6&#39; &#39;unsafe-eval&#39; https://challenges.cloudflare.com; script-src-attr &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src &#39;self&#39; https://challenges.cloudflare.com; connect-src &#39;self&#39; https://challenges.cloudflare.com; frame-src &#39;self&#39; https://challenges.cloudflare.com blob:; child-src &#39;self&#39; https://challenges.cloudflare.com blob:; worker-src blob:; form-action http: https:; base-uri &#39;self&#39;"><style>*{box-sizing:border-box;margin:0;padding:0}html{line-height:1.15;-webkit-text-size-adjust:100%;color:#313131;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji"}body{display:flex;flex-direction:column;height:100vh;min-height:100vh}.main-content{margin:8rem auto;padding-left:1.5rem;max-width:60rem}@media (width <= 720px){.main-content{margin-top:4rem}}#challenge-error-text{background-image:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgZmlsbD0ibm9uZSI+PHBhdGggZmlsbD0iI0IyMEYwMyIgZD0iTTE2IDNhMTMgMTMgMCAxIDAgMTMgMTNBMTMuMDE1IDEzLjAxNSAwIDAgMCAxNiAzbTAgMjRhMTEgMTEgMCAxIDEgMTEtMTEgMTEuMDEgMTEuMDEgMCAwIDEtMTEgMTEiLz48cGF0aCBmaWxsPSIjQjIwRjAzIiBkPSJNMTcuMDM4IDE4LjYxNUgxNC44N0wxNC41NjMgOS41aDIuNzgzem0tMS4wODQgMS40MjdxLjY2IDAgMS4wNTcuMzg4LjQwNy4zODkuNDA3Ljk5NCAwIC41OTYtLjQwNy45ODQtLjM5Ny4zOS0xLjA1Ny4zODktLjY1IDAtMS4wNTYtLjM4OS0uMzk4LS4zODktLjM5OC0uOTg0IDAtLjU5Ny4zOTgtLjk4NS40MDYtLjM5NyAxLjA1Ni0uMzk3Ii8+PC9zdmc+");background-repeat:no-repeat;background-size:contain;padding-left:34px}</style><meta http-equiv="refresh" content="360"></head><body><div class="main-wrapper" role="main"><div class="main-content"><noscript><div class="h2"><span id="challenge-error-text">Enable JavaScript and cookies to continue</span></div></noscript></div></div><script nonce="N4llNmsleASQfK5uEByMM6">(function(){window._cf_chl_opt = {cFPWv: 'b',cH: '9.FuYQJzIn2k05teJ1IdlxNxBi0nGMYA1JvkL4g6UHc-1792334407-1.2.1.1-LhSIefI7knq28K9LG5nbRPkywfaTBYVBBxX6pCnLFiXY8bNGO8A9YY8hLfexroka',cITimeS: '1792334407',cN: 'N4llNmsleASQfK5uEByMM6',cRay: 'a4c84be12fe60287',cTplC:0,cTplO:0,cTplV:5,cType: 'managed',cUPMDTk:"/swagger/v1/swagger.json?__cf_chl_tk=JSP_LwVviB.WgY9Y2pI6tPIwkN7iBkR6Bgj9iiiQck8-1792334407-1.0.1.1-JUqw4C5W_OZnznexqZcGtIKhf.L._8I7NjFL_rwf_Lw",cvId: '3',cZone: 'api.ukrainealarm.com',fa:"/swagger/v1/swagger.json?__cf_chl_f_tk=JSP_LwVviB.WgY9Y2pI6tPIwkN7iBkR6Bgj9iiiQck8-1792334407-1.0.1.1-JUqw4C5W_OZnznexqZcGtIKhf.L._8I7NjFL_rwf_Lw",md: '1bki9n695ALV9b2V_kyF2V61wU1i15ArecM94WMG0to-1792334407-1.2.1.1-aBu4nYrhDI25b7LW1bU8XZX703TARkmaLH4Has7E0WGqf1fMBQPnVSRQ0QSIomb_ELun2OP.B56QtCPU_Qopw0sj_D7w.O3T9xAyqzfSJ2wGj.xsubEcM0OO7EC.67JPNWVNXSmkgeL0Upz5k5ssG1YfDDkPBjw9G8LKBo4kdf9S.CbkdvmRjddvl7IwA.rf7IFflYifVvKRjM_SsEbFdZ1JkWr01Pjlzz2rTR8zLbB7GT.LzIQyop3fY9tAuic78VJaLw1ywubdNoaWhrciOGT2bCkQTvL6v8eNHIFOQvk8UZfH8gvQ1Lmr8aQGbDHc6BuahZCJgyWZocVBMKJy6JwDPZbnetNmEt3qgpgrzSFV9T9WTUGvzcjKS54JFIVDcy_PHql.rTTusAUGOtfxG9Uvazw9E6ugAT8lLu9VSPji45lzvSKMxO_c2yfVPVJEO6WPQwPYf0cfLS63m4d4EIHFN1.xH0L1mj2gQRJpFnxCKGeULIRfqUoei10o.vNG0a996G_7QNRh.tGY1ULPIrrRCwgivJfG39NhmILlDCIzdVVcjBKv2Kz1AlAvLSBSpExumINMZqsyKoEOFwqBAyO8uad4LS3y5.oCwGCYzjfLgL6kGelVtNvghIKk5dCMoGhbFJ3lVEhN5.GxhxsRrK3QXK9otkNFjE_sVF9BVgY9O1DlZvOH2c0ulWkDrM3eJOtuob1TSULHioHb5oVvxDl2LTnU9KK7ruIdPW34ccKrKID3hKtPyTXjri44yNEkwzu3o0UYojJasFotPhRq78HsSuBKMhhzKuSp3RUuo9yuyJk0Jo.bOK4ee9lV4efGg3LqRcZG2VhysooRa5GR52Q.NG1qhQhFRjZk2U0hFIZ65oHaC.jABoMCnGuFnCc4ErMMJ4pfVygOKxz4_F_ogg0aj2O5gdJnpzxBwULhqzIdgyBAjmLGh0slFqENomjq.cLX.DLj0o6b8rskSwSrMonPdmW_MovqA3ysZduvkprAsppF0oot6IsXysLMoS4a7.SA.7TJinEI9SuQWmeBaq7HzkH0JXlkBCBF3329.8NiJExLPVG8aKJuF4kGjqZ2XJ2t8cGjKBVX7NfypL17AslhXpa_aNVSh3CK6W.TizA',mdrd: 'FShLp1f6TVNJbFlixTXb5zcwaWl9.yCuKfsMPjMlSkc-1792334407-1.2.1.1-0DIbn7GDrUSA8Io.EYRhqIEc41j2zY_gb500QMbFHcOZy2IabsaTXgm._CniPjlkgFjzasYW1hR.fMDkhodg5QhjY8t5SAlLqmM3gdw463IbS1gont6e.qWwSS9T7VxRomwgSkno651jcu68hWWjG0CSvhQB6DZWsup.YVYhMJBd9mcNV.eyOCgbgHKkbIjfljK3GtB3fUSuOC3KICpZkjZTJoip2UMzXqTaEM9O3OA',};var a = document.createElement('script');a.nonce = 'N4llNmsleASQfK5uEByMM6';a.src = '/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=a4c84be12fe60287';window._cf_chl_opt.cOgUHash = location.hash === '' && location.href.indexOf('#') !== -1 ? '#' : location.hash;window._cf_chl_opt.cOgUQuery = location.search === '' && location.href.slice(0, location.href.length - window._cf_chl_opt.cOgUHash.length).indexOf('?') !== -1 ? '?' : location.search;if (window.history && window.history.replaceState) {var ogU = location.pathname + window._cf_chl_opt.cOgUQuery + window._cf_chl_opt.cOgUHash;history.replaceState(null, null,"/swagger/v1/swagger.json?__cf_chl_rt_tk=JSP_LwVviB.WgY9Y2pI6tPIwkN7iBkR6Bgj9iiiQck8-1792334407-1.0.1.1-JUqw4C5W_OZnznexqZcGtIKhf.L._8I7NjFL_rwf_Lw"+ window._cf_chl_opt.cOgUHash);a.onload = function() {history.replaceState(null, null, ogU);}}document.getElementsByTagName('head')[0].appendChild(a);}());</script></body></html>
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Ukraine Alert API",
+    "contact": {
+      "name": "Stfalcon",
+      "email": "support@stfalcon.com"
+    },
+    "version": "3.0"
+  },
+  "paths": {
+    "/api/v3/alerts": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Області, регіони та громади з тривогами",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertRegionModel"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/alerts/{regionId}": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Статус області/регіону/громади",
+        "parameters": [
+          {
+            "name": "regionId",
+            "in": "path",
+            "description": "ID області/регіону/громади",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertRegionModel"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/alerts/dateHistory": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Отримати історію тривог по даті",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "description": "Дата в форматі \"РікМісяцьДень\". Приклад: 20220224",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertDurationResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/alerts/regionHistory": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Отримати останніх 25 тривог регіону",
+        "parameters": [
+          {
+            "name": "regionId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RegionAlarmsHistory"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/alerts/status": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Перевірка номеру останньої дії. Використовувати для перевірки необхідності оновлювати дані",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertModification"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/geo-data": {
+      "get": {
+        "tags": [
+          "GeoData"
+        ],
+        "summary": "GEOJSON усіх активних тривог.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeaDataResultModel"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/geo-data/all": {
+      "get": {
+        "tags": [
+          "GeoData"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v3/geo-data/check-coordinates": {
+      "post": {
+        "tags": [
+          "GeoData"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinatesByRegionModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinatesByRegionModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinatesByRegionModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoordinatesByRegionResultModel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/regions": {
+      "get": {
+        "tags": [
+          "Regions"
+        ],
+        "summary": "Повертає список усіх областей, регіонів та міст",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionsViewModel"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/webhook": {
+      "post": {
+        "tags": [
+          "WebHook"
+        ],
+        "summary": "Підписка на WebHook про нові сирени та їх відбій. У вебхукі відпрявляється подія тривоги/відбою (приклад в відповіді \"200\")",
+        "description": "Інструкція з перевірки підпису webhook: <a href=\"/webhook-signature-validation.html\" target=\"_blank\">/webhook-signature-validation.html</a>\nСтруктура та логіка webhook-повідомлення: <a href=\"/webhook-message-model.html\" target=\"_blank\">/webhook-message-model.html</a>",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "WebHook"
+        ],
+        "summary": "Оновлення WebHook посилання про нові сирени та їх відбій",
+        "description": "Інструкція з перевірки підпису webhook: <a href=\"/webhook-signature-validation.html\" target=\"_blank\">/webhook-signature-validation.html</a>\nСтруктура та логіка webhook-повідомлення: <a href=\"/webhook-message-model.html\" target=\"_blank\">/webhook-message-model.html</a>",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebHookMessageModel"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "WebHook"
+        ],
+        "summary": "Відписка на WebHook про нові сирени та їх відбій",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebHookModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Alert": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionType": {
+            "$ref": "#/components/schemas/v2RegionType"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AlertType"
+          },
+          "lastUpdate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "activeAlertLevels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlertLevelWithReason"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertDurationResponse": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionName": {
+            "type": "string",
+            "nullable": true
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "string",
+            "format": "date-span"
+          },
+          "alertType": {
+            "$ref": "#/components/schemas/AlertType"
+          },
+          "isContinue": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertLevel": {
+        "enum": [
+          "Red",
+          "Yellow"
+        ],
+        "type": "string"
+      },
+      "AlertLevelWithReason": {
+        "type": "object",
+        "properties": {
+          "alertLevel": {
+            "$ref": "#/components/schemas/AlertLevel"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertLevelWithReasonWebhook": {
+        "type": "object",
+        "properties": {
+          "alertLevel": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertModification": {
+        "type": "object",
+        "properties": {
+          "lastActionIndex": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertRegionModel": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionType": {
+            "$ref": "#/components/schemas/v2RegionType"
+          },
+          "regionName": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionEngName": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUpdate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "activeAlerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Alert"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AlertType": {
+        "enum": [
+          "UNKNOWN",
+          "AIR",
+          "ARTILLERY",
+          "URBAN_FIGHTS",
+          "CHEMICAL",
+          "NUCLEAR",
+          "INFO",
+          "CUSTOM"
+        ],
+        "type": "string"
+      },
+      "BadRequestResult": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CoordinatesByRegionModel": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CoordinatesByRegionResultModel": {
+        "type": "object",
+        "properties": {
+          "isInRegion": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GeaDataResultModel": {
+        "type": "object",
+        "properties": {
+          "airAlerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            },
+            "nullable": true
+          },
+          "artilleryAlerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            },
+            "nullable": true
+          },
+          "urbanFightAlerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonNode"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "JsonNode": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "$ref": "#/components/schemas/JsonNodeOptions"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "root": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JsonNodeOptions": {
+        "type": "object",
+        "properties": {
+          "propertyNameCaseInsensitive": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegionAlarmModel": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "string",
+            "format": "date-span"
+          },
+          "alertType": {
+            "$ref": "#/components/schemas/AlertType"
+          },
+          "regionName": {
+            "type": "string",
+            "nullable": true
+          },
+          "isContinue": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegionAlarmsHistory": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionName": {
+            "type": "string",
+            "nullable": true
+          },
+          "alarms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegionAlarmModel"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegionViewModel": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionName": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionType": {
+            "$ref": "#/components/schemas/v2RegionType"
+          },
+          "regionChildIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegionViewModel"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegionsViewModel": {
+        "type": "object",
+        "properties": {
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegionViewModel"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebHookMessageModel": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "regionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "alarmType": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "alertLevel": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "activeAlertLevels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlertLevelWithReasonWebhook"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebHookModel": {
+        "type": "object",
+        "properties": {
+          "webHookUrl": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "v2RegionType": {
+        "enum": [
+          "State",
+          "District",
+          "Community",
+          "CityOrVillage",
+          "CityDistrict",
+          "Null"
+        ],
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "Token": {
+        "type": "apiKey",
+        "description": "Використовуйте токен, що був відправлений Вам на пошту після реєстрації",
+        "name": "Authorization",
+        "in": "header"
+      }
+    }
+  },
+  "security": [
+    {
+      "Token": [ ]
+    }
+  ],
+  "tags": [
+    {
+      "name": "Alerts"
+    },
+    {
+      "name": "GeoData"
+    },
+    {
+      "name": "Regions"
+    },
+    {
+      "name": "WebHook"
+    }
+  ]
+}
