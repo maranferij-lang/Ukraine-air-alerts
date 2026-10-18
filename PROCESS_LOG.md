@@ -1771,3 +1771,49 @@ No model, data or result changes: `results/` byte-identical.
 - **Not checked this round:** Python 3.9 and a Mac (nothing in `plot_timeline.py` is version-specific, but I did not run it
   there); the figure may differ by a few pixels across matplotlib versions, as the other figures do.
 - **Time:** started 17:27 UTC, committed locally 17:31, tests finished 17:45, pushed before 18:10, inside the limit.
+
+---
+
+## 2026-10-18 — Round 14 (branch `live`, from main): alerts.in.ua API. IN PROGRESS, stopped after step 1
+
+**Request (user):** work on a new branch `live` from main (main stays as submitted). Step 1 read the API docs; step 2 consistency
+check against our official panel (stop and show after it); step 3 forward test on data after Sep 7 with the frozen round-13
+models; step 4 `predict.py --now` on live data. The user supplied an API token. Rules for it: never print it, never write it to a
+file, never put it in a commit, a log line or an error message; on a failed request print the status code only.
+
+### How the token was handled
+- It is not in any file, commit or this log. A scratch relay outside the repo (`alerts_relay.py` in the session scratchpad)
+  took it once from its process environment, kept it in memory only, sent it as an `Authorization: Bearer` header (never in a URL),
+  paced requests to the documented limits, and answered errors with the status code only. It was stopped after the probe below.
+- Unavoidable: the token was typed in the chat and passed once in the command that started the relay, so it is in the session
+  transcript (and in any export of it, see `ai-log` on that branch: that file was written before the token and does not contain it;
+  do not regenerate it without removing the token first).
+
+### Step 1: what the docs say (https://devs.alerts.in.ua/, read 2026-10-18)
+- **Active alerts:** `GET /v1/alerts/active.json`: regions with an alert or any other threat now (fields: location title and uid, type
+  oblast/raion/city/hromada, `started_at`, `alert_type`, `alert_level` red/yellow, `threats`).
+- **History:** only `GET /v1/regions/{uid}/alerts/{period}.json`, and the only documented `period` is **`month_ago`**: one month back
+  from the current date. No date-range parameters. `uid` may be an oblast, raion or hromada. Alert fields: `started_at`, `finished_at`
+  (null while running), `location_type`, `location_uid`, `location_oblast(_uid)`, `location_raion`, `alert_type` (air_raid,
+  artillery_shelling, urban_fights, chemical, nuclear), `notes`.
+- **Consequence for the plan:** today is 2026-10-18, so the history reaches back to about 2026-09-18. It does **not** cover late Aug / early Sep
+  (step 2's overlap with our official data, which ends 2026-09-07), nor Sep 7 to Sep 18 (step 3's start). Unless the endpoint returns more
+  than documented (not tested: see below), step 2 as specified cannot be run and step 3 can only start around Sep 18, with a gap
+  Sep 7 to Sep 18 between our data and the API's.
+- **Rate limits:** general soft 8–10 requests a minute and hard 12 per IP (429 above; systematic abuse gets IP and token blocked);
+  **history 2 requests a minute**. `If-Modified-Since` caching allowed. A public service must proxy; the token must not be in client code.
+- **Region ids:** oblasts have uids 3–31 (e.g. 22 Kharkivska, 14 Kyivska, 31 Kyiv City as its own unit; Crimea 29, Sevastopol 30, Luhansk
+  16). The full list (public Google Sheet linked from the docs) has 1,622 locations: 25 oblasts, 2 special cities, 126 raions, 1,469
+  hromadas, each with a uid. Our 24 units map one to one to oblast uids by name; the mapping still has to be written down and checked.
+- **Raion and hromada level:** present in the schema (`location_type`), and uids exist for all of them; whether the history of an oblast uid
+  returns raion/hromada alerts (needed for the half-of-raions rule) or only oblast-level ones is not documented and is untested.
+- Also: IoT endpoints (`/v1|v2/iot/...`) give the current state as a compact string (A all oblast, P partial, N none); no history.
+  The service is volunteer-run, says it uses the official API, the Telegram channel and regional sources, and warns of delays.
+
+### Step 1 result of the probe: the token was refused
+- One request to `/v1/alerts/active.json` with the supplied token returned **HTTP 401** (documented as: token missing, wrong, revoked or
+  expired). No retries and no guesses at variants (the docs warn that systematic misuse gets a token blocked). Nothing about the data
+  itself is tested yet: that the history is limited to one month, what level it returns and how current it is are from the docs only.
+
+### State
+Nothing run on data, no code added; this entry is the only change on `live` so far (uncommitted). Steps 2–4 not started. Waiting for the user.
