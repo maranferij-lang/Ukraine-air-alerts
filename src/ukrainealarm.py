@@ -37,8 +37,8 @@ UK_TO_OURS = {
 }
 
 
-# Raion names the API writes differently from our (older) official feed. Sheptytskyi raion (Lviv oblast) is the former Chervonohradskyi raion:
-# our list has 7 raions for Lviv oblast, six of them appear in the API under the same name, and this is the seventh.
+# Raion names the API writes differently from our (older) official feed. Sheptytskyi raion (Lviv oblast) is a real rename: the town of Chervonohrad and its
+# raion were renamed Sheptytskyi in 2024, and our official feed still says Chervonohradskyi raion (the other six Lviv raions have the same name in both).
 RAION_ALIASES = {"Sheptytskyi raion": "Chervonohradskyi raion"}
 
 

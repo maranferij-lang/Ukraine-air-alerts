@@ -53,8 +53,9 @@ def _at(a, i):
     return a[i] if len(a) else np.zeros(np.shape(i), dtype=a.dtype)
 
 
-def _own(starts, ends, joined_starts, t):
-    """Own-oblast features for one oblast; all inputs int64 ns, t sorted or not."""
+def _own(starts, ends, joined_starts, t, masks=MASKS):
+    """Own-oblast features for one oblast; all inputs int64 ns, t sorted or not.
+    masks: (start, end) ns of the periods to treat as unobserved (default: the official feed's outages)."""
     out = {}
     k = np.searchsorted(starts, t, side="right") - 1          # last raw start <= t
     kk = np.maximum(k, 0)
@@ -78,7 +79,7 @@ def _own(starts, ends, joined_starts, t):
     for hours in [6, 24, 168]:
         w = hours * NS_PER_HOUR
         masked, covered_masked, starts_masked = np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)
-        for m0, m1 in MASKS:  # the part of [t-w, t] inside each outage
+        for m0, m1 in masks:  # the part of [t-w, t] inside each outage
             lo, hi = np.maximum(t - w, m0), np.minimum(t, m1)
             inside = hi > lo
             hi = np.where(inside, hi, lo)
@@ -102,8 +103,10 @@ def _neighbour_inputs(starts, ends, joined_starts, t):
     return alert_last_hour.astype(float), starts_6h.astype(float)
 
 
-def build_features(rows, episodes, raw, neighbours, horizons, oblasts):
-    """rows: complete hourly grid per oblast with the same t values for every oblast, sorted by
+def build_features(rows, episodes, raw, neighbours, horizons, oblasts, outages=OFFICIAL_OUTAGES):
+    """outages: [(start, end)] UTC strings of the periods the data source did not observe (default: the official feed's
+    outage). For another source, e.g. the API archive, pass its own list (an empty list: nothing masked).
+    rows: complete hourly grid per oblast with the same t values for every oblast, sorted by
     oblast then t (targets.make_rows). Returns {H: DataFrame aligned with rows}; the frames
     differ only in freq4w."""
     groups = rows.groupby("oblast").indices
@@ -112,6 +115,7 @@ def build_features(rows, episodes, raw, neighbours, horizons, oblasts):
     assert all(np.array_equal(g, grids[0]) for g in grids), "rows must be the same t grid per oblast"
     assert np.all(np.diff(grids[0]) == NS_PER_HOUR), "rows must be hourly with no gaps"
 
+    masks = [(pd.Timestamp(a, tz="UTC").value, pd.Timestamp(b, tz="UTC").value) for a, b in outages]
     raw_eps = {ob: tuple(map(_ns, se)) for ob, se in _per_oblast(raw).items()}
     joined = {ob: _ns(se[0]) for ob, se in _per_oblast(episodes).items()}
     empty = np.array([], dtype=np.int64)
@@ -121,7 +125,7 @@ def build_features(rows, episodes, raw, neighbours, horizons, oblasts):
     for ob, idx in groups.items():
         s, e = raw_eps.get(ob, (empty, empty))
         js = joined.get(ob, empty)
-        for name, values in _own(s, e, js, t_all[idx]).items():
+        for name, values in _own(s, e, js, t_all[idx], masks).items():
             cols.setdefault(name, np.full(len(rows), np.nan))[idx] = values
         nb_alert[ob], nb_starts[ob] = _neighbour_inputs(s, e, js, t_all[idx])
     cols["nb_share_1h"] = np.full(len(rows), np.nan)
@@ -140,7 +144,7 @@ def build_features(rows, episodes, raw, neighbours, horizons, oblasts):
     out = {}
     for H in horizons:
         target = pd.Series(y_start(rows, episodes, H), index=rows.index, dtype=float)
-        target[touches(rows, OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=pd.Timedelta(hours=H))] = np.nan
+        target[touches(rows, outages, before=pd.Timedelta(0), after=pd.Timedelta(hours=H))] = np.nan
         by_oblast = target.groupby(rows["oblast"])
         lagged = pd.concat([by_oblast.shift(168 * k) for k in range(1, 5)], axis=1)
         f = base.copy()

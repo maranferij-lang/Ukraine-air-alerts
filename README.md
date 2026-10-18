@@ -107,6 +107,7 @@ Where the checks caught mistakes:
 - **Western oblasts:** Lviv, Ivano-Frankivsk and Zakarpattia had one new alert each in the 24 test days. Their within-oblast AUCs are close to noise.
 - **Sep 4–5:** two days with 7-day features scaled from the observed hours. Every predictor scores lower there, and two days can't say why.
 - **The official feed stopped on 2026-09-07,** so the test window ends a month before the pull and there is no "now".
+- **The official feed misses one wave inside the old test window:** on Aug 19–20 the Ukraine Alarm API shows alerts in Chernihivska and Kyivska oblast (about 10–13 hours) that our official data does not have, 25 oblast-hours in all (found by comparing the two, [results/api_check.md](results/api_check.md)). The old test and the data are unchanged. Putting those hours back moves the model's within-oblast AUC by +0.0031, +0.0014 and +0.0002 at H = 1, 3, 6 and its Brier by 0.0000, 0.0000 and −0.0002 ([results/aug19_sensitivity.md](results/aug19_sensitivity.md)).
 - **The raion switch (Jul–Dec 2025)** changed what an alert means; the half-of-raions rule keeps base rates roughly continuous for most oblasts but not all (Kherson).
 - **Thresholds** come from a validation fit on train minus the last week, not from the model scored on test.
 

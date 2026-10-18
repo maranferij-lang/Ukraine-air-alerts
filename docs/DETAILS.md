@@ -38,6 +38,7 @@ Known problems, handled in `src/load.py`:
 - No official messages 2026-08-29 → 2026-09-02. These hours are masked.
 - 38% of official rows are upstream duplicates. They are dropped.
 - The last day of each file is incomplete, because alerts still open at the pull are missing. It is cut.
+- **A wave is missing inside the old test window (found later, not handled):** the 2026-08-19 ~20:52 UTC wave in Chernihivska and Kyivska oblast (about 10–13 hours, 25 oblast-hours) is in the Ukraine Alarm API but not in this feed, and the feed has no row starting in the 20:xx UTC hour of Aug 19. `data/raw` is as pulled and the old test is unchanged; the size of the effect is in `results/aug19_sensitivity.md` (about +0.003 AUC at most for the model), the comparison in `results/api_check.md`.
 
 ### Evaluation window: the most recent trustworthy data
 The test period is the **last 30 full days of official data: 2026-08-07 00:00 → 2026-09-05 23:00
@@ -397,6 +398,10 @@ Limitations:
 - **The raion switch (Jul–Dec 2025)** changed what an alert means. The half-of-raions rule keeps
   base rates roughly continuous for most oblasts but not all (Kherson), and training mixes both
   regimes. Training only on 2026 neither clearly helped nor hurt.
+- **The official feed misses one wave inside the old test window.** On 2026-08-19 from about 20:52 UTC, the Ukraine Alarm API has alerts in Chernihivska and Kyivska oblast
+  (about 10–13 hours) that our official data does not have: 25 oblast-hours where the old test's target says "no alert". The data and the old test are unchanged. With those
+  hours put back (a patched copy, `scripts/sensitivity_aug19.py`), the model's within-oblast AUC changes by +0.0031 / +0.0014 / +0.0002 at H = 1 / 3 / 6 and its Brier by
+  0.0000 / 0.0000 / −0.0002; the baselines move by at most 0.0024 in AUC (`results/aug19_sensitivity.md`).
 
 Next:
 - Weekly refits through the test window, to see whether level drift costs the model what it
@@ -431,6 +436,10 @@ python scripts/predict.py --at "2026-09-05 14:00" --all
 python scripts/predict.py --now --oblast Kharkivska
 pip install translitua
 python scripts/source_check.py
+python scripts/api_check.py
+python scripts/sensitivity_aug19.py
+python scripts/forward_test.py --selftest
+python scripts/forward_test.py --diagnose
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -455,6 +464,10 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/predict.py --now --oblast Kharkivska`: checks the official channel for newer data; there is none, so it says so and shows the latest hour we have
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
+- `python scripts/api_check.py`: the Ukraine Alarm API history (data/api_archive/) against our official data, same rules for both -> results/api_check.md (needs translitua)
+- `python scripts/sensitivity_aug19.py`: the old test on a patched copy with the Aug 19-20 wave put back -> results/aug19_sensitivity.md (about 2 minutes; the repo data is not touched)
+- `python scripts/forward_test.py --selftest`: the forward test's scoring code on the old test rows must give results/test_table.csv back
+- `python scripts/forward_test.py --diagnose`: does the feature pipeline behave the same on API data? -> results/forward_api/diagnostics.md (no outcome is scored)
 
 **News experiment (scripts/evaluate_news.py runs the four steps after the re-pull)**
 
@@ -475,6 +488,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/fetch_data.py`: re-pull (overwrites data/raw/, updates PULL_INFO.md)
 - `python scripts/fetch_gdelt_events.py`: re-pull GDELT events, about 9 minutes, needs network -> data/news/
 - `python scripts/fetch_telegram_kpszsu.py`: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
+- `python scripts/api_probe.py` and `python scripts/archive_api.py`: talk to the Ukraine Alarm API, need your own token in the shell variable `UA_ALARM_TOKEN` (never in a file) -> data/api_raw/ (git-ignored), data/api_archive/
 
 ## Definitions
 

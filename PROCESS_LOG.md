@@ -1978,3 +1978,58 @@ It changes one row's match and none of the oblast-hour numbers. This is an infer
 
 **Decision for the user:** go on to the forward test (step 3) or not; and whether the Aug 19-20 official gap should be recorded in the README / log as a
 known limitation of the old test (its effect is small: 34 of 14,976 hours, one event), which I have not touched.
+
+### Update (2026-10-18, evening): forward test prepared and diagnosed, NOT scored; Aug 19-20 limitation; the rename
+**User's decisions:** (1) forward test: go, frozen round-13 models and thresholds, no refit or retuning, score 2026-09-07 to 2026-10-17 (Oct 18 left out),
+features from the API archive only, same metrics as the old test (within-oblast AUC, Brier with decomposition, calibration, day-block bootstrap), own section, source
+named, "about 41 days, wide intervals", and **stop before scoring if the feature pipeline behaves differently on API data**; (2) put the Aug 19-20 gap into README and
+DETAILS as a known limitation of the old test, data untouched, plus a side note with those hours flipped; (3) Sheptytskyi is a real rename (Chervonohrad and its raion,
+renamed 2024): **stated as a fact now**, which supersedes the word "inference" in the earlier entry (the log is append-only; `src/ukrainealarm.py` says it as a fact).
+
+**Flag on the baselines (said before doing it, as CLAUDE.md asks):** the request listed "logit, freq4w, persistence" as the baselines. CLAUDE.md fixes the three baselines
+(same as now, same hour yesterday, train frequency), and the old test also showed the logistic regression. So the forward test reports **all** of them: the three
+baselines, the logistic model, and, as an extra, the rolling 4-week frequency (the model's `freq4w` feature used directly as a score; its threshold is also frozen, from the
+last train week). Nothing was left out.
+
+**Frozen artifacts (code changes; the old test's outputs are byte-identical):**
+- `scripts/evaluate.py` now also saves `models/frozen.json` (every F1 threshold it already computed, per predictor and H, plus the logistic weights, plus the freq4w
+  threshold). The old pipeline was rerun: `results/`, `figures/` and the saved LightGBM and frequency files in `models/` are **byte-identical** to before.
+- `src/features.build_features(..., outages=...)` and `src/dataset.build_rows(..., first=, end=)`: optional arguments, defaults unchanged (the official feed's outage,
+  the official data's own start and end).
+- `scripts/forward_test.py` (`--selftest`, `--diagnose`, `--score`). **Self-test passed:** the scoring code applied to the OLD official test rows with the frozen
+  artifacts reproduces every AUC, Brier, precision, recall and F1 cell of `results/test_table.csv` (target b, all 24 days) for LightGBM, logistic, same as now, same hour
+  yesterday and train frequency, at H = 1, 3, 6. It found one bug first: pandas' default CSV reader is off by 1 ulp on the saved frequency table, which moved 194 test rows
+  that tie exactly at the threshold (the thresholded metrics of the frequency baseline at H=1 differed); the table is now read with `float_precision="round_trip"`.
+
+**Diagnostics on API data (`results/forward_api/diagnostics.md`; run before scoring; no outcome of the forward rows compared with any prediction):**
+1. **The one real difference: the official outage mask.** `src/features.py` treats 2026-08-29..09-02 as unobserved (7-day windows over the observed part, scaled; freq4w
+   lags that touch it skipped). The API has data there (521 oblast episodes). With the mask left on, 1,555 forward rows (Sep 7-9) get different `share_7d` / `starts_7d`
+   (mean abs diff of starts_7d 2.67) and 4,206-6,121 rows (to Sep 30) a different `freq4w` (mean abs diff 0.14), and the frozen LightGBM's probability differs by more than
+   0.001 on 3,393 / 5,718 / 5,551 rows (H = 1 / 3 / 6; largest 0.083 / 0.146 / 0.150). The right setting for API data is **no mask**, which is what the code uses (`outages=[]`).
+   This is the thing the user asked me to stop on: it is a deliberate setting I would score with, not a surprise, but it is a choice and it is not in the old pipeline.
+2. **Same features from official and API on the same rows** (Aug 13-28, 9,216 rows; freq4w excluded, it needs 4 weeks of API history and the archive starts Aug 6): equal within
+   0.001 on all but a few dozen rows outside the Aug 19-20 wave (for example `now`, `nb_share_1h`, `nb_starts_6h`: 8,544 of 8,544; `starts_7d` 7,950; `share_7d` 7,698 of 8,544, the
+   rest are sub-second timing differences); correlations 0.989-1.000.
+3. **Leakage check on API rows:** features for 40 forward origins rebuilt from API rows cut at t: 37,440 values, 0 mismatches.
+4. **Gaps in the API:** episodes per day in the window min 59, median 104, max 172, no thin day, every oblast has episodes. Rows left out for having no end (`isContinue` true,
+   end 0001-01-01): 2 hromada rows from Sep 17 (not used by the rule) and 78 rows from Oct 18 09:51 (after the window).
+5. **Not a pipeline difference, but the forward period is a busier regime than the old test** (features and shares of origins, no model output): share of origins with a new alert in
+   (t, t+H]: H=1 0.121 -> 0.180, H=3 0.297 -> 0.414, H=6 0.432 -> 0.571; `now` 0.209 -> 0.288; `starts_7d` mean 20.2 -> 30.1. Against the training range: 221 forward rows (0.9%) have
+   `starts_7d` above the training maximum (81) and 40 have `starts_24h` above its maximum (16); every other feature stays inside it. So the frozen models see mostly familiar
+   inputs, but their probabilities were calibrated to a quieter level (expect the calibration to show it; nothing is retuned).
+
+**Scoring was not run on the API data.** `forward_test.py --score` exists (tables, calibration, day-block bootstrap, all baselines) and is ready; it waits for the user to
+confirm the no-mask setting and to say go.
+
+**Side note, Aug 19-20 (`scripts/sensitivity_aug19.py` -> `results/aug19_sensitivity.md`):** a patched copy of the official rows in a temporary folder (data/raw untouched) with the
+API's 18 raion rows of Chernihivska and Kyivska oblast for alerts starting Aug 19 19:00 to Aug 20 12:00 UTC added: **25 oblast-hours** flip from quiet to under alert (Chernihivska 14,
+Kyivska 11). The unmodified `evaluate.py` was run on the copy (same training rows, so the same models). Target (b), all 24 days, within-oblast AUC (Brier) old -> patched:
+LightGBM H=1 0.6879 -> 0.6910 (0.0875 -> 0.0875), H=3 0.6451 -> 0.6465 (0.1446 -> 0.1446), H=6 0.6394 -> 0.6396 (0.1398 -> 0.1396); the baselines move by at most 0.0024 in AUC and 0.0018 in
+Brier (same as now, same hour yesterday); train frequency by at most 0.0006. Base rate of a new alert: 0.1214 -> 0.1217 (H=1), 0.2957 -> 0.2965 (H=3), 0.4300 -> 0.4312 (H=6). The
+patched copy mixes the two sources (the API's alerts added to the official ones). No ordering of the model against the baselines changes.
+- **README and DETAILS:** one bullet in the README limitations (now six; the earlier "five" was a shape asked for in round 13, this one was asked for explicitly), a bullet in the Data
+  "Known problems" and in the full Limitations of DETAILS, and the new scripts in the run order. Links and anchors checked (0 problems); no code block has `#` or a backtick.
+
+**Open, for the user:** (a) confirm the forward test scores with **no outage mask** (recommended: the API observed those hours); (b) go for `--score`; (c) optional: the old-window
+equivalence test (the frozen models on API-source features for Aug 7-28) needs the API archive back to about Jul 1 (4 weeks of lags before Aug 7): one more backfill
+(`archive_api.py --from 2026-07-01 --to 2026-08-05`, about 36 days); not required for the forward test.

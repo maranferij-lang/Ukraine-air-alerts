@@ -22,17 +22,18 @@ def load_inputs():
     return official, raion_list(official)
 
 
-def build_rows(official=None, raions=None):
+def build_rows(official=None, raions=None, first=None, end=None):
     """Complete hourly grid of (oblast, t) with "now" and both targets for every H.
 
     "now" comes from raw episodes (before joining restarts): at t nobody knows yet whether a
     restart will follow. Targets come from the joined episodes.
+    first, end: override the grid's start and end (default: the first start rounded up to a day, and data_end(official)).
     """
     if official is None:
         official, raions = load_inputs()
     episodes, raw = official_episodes(official, raions=raions)
-    first = official["start"].min().ceil("D")
-    end = data_end(official)
+    first = official["start"].min().ceil("D") if first is None else first
+    end = data_end(official) if end is None else end
     rows = make_rows(official["oblast"].unique(), first, end - pd.Timedelta(hours=1))
     rows["now"] = active_now(rows, raw)
     for H in HORIZONS:
