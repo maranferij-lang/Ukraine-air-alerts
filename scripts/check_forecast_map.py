@@ -164,6 +164,16 @@ def i18n_checks():
                 bad.append((k, "script"))
         elif len(en) != len(uk):
             bad.append((k, "length"))
+    def walk(v):
+        if isinstance(v, str):
+            yield v
+        else:
+            for x in v:
+                yield from walk(x)
+    dashes = [(k, t[:50]) for k, v in S.items() for t in walk(v["uk"]) if re.search("[\u2012-\u2015\u2212]", t)]
+    check(not dashes, "no long dash (en dash, em dash, minus sign) in any Ukrainian text" + (f": {dashes[:3]}" if dashes else ""))
+    inputs_uk = S["inputs"]["uk"]
+    check("Ціль" not in " ".join(walk(S["inputs"]["uk"])) and "Що прогнозуємо: чи почнеться нова тривога протягом наступних H годин." in inputs_uk, "the Ukrainian 'inputs' line says \"Що прогнозуємо: чи почнеться нова тривога протягом наступних H годин\" (no \"Ціль\")")
     check(not bad, f"every text has an English and a Ukrainian version with the same placeholders, English without Cyrillic, Ukrainian with it ({len(S)} texts)" + (f": {bad}" if bad else ""))
 
 
@@ -182,6 +192,20 @@ def freshness_checks():
 def extract_data(page):
     m = re.search(r'<script id="data" type="application/json">(.*?)</script>', page, re.S)
     return json.loads(m.group(1).replace("<\\/", "</"))
+
+
+def percent_checks():
+    from scripts.live_api import ago, calibration_note
+    now = pd.Timestamp("2026-10-10 12:37:00", tz="UTC")
+    check(ago(now, now - pd.Timedelta(hours=5, minutes=20), "en", whole_hours=True) == "5 h before now" and ago(now, now - pd.Timedelta(hours=5, minutes=20), "uk", whole_hours=True) == "5 год тому"
+          and ago(now, now - pd.Timedelta(hours=5), "en") == "5.0 h before now", "freshness text for the page has whole hours (no decimal), the terminal's is unchanged")
+    for lg in ("en", "uk"):
+        for model in ("v1", "v2"):
+            plain, pct_ = calibration_note(model, lg), calibration_note(model, lg, percent=True)
+            if plain is None:
+                print(f"skip  calibration note {model}/{lg}: table not there"); continue
+            check(re.search(r"\d\.\d{3}", plain) and not re.search(r"\d\.\d", pct_) and "%" in pct_ and plain.split(":")[0] == pct_.split(":")[0],
+                  f"[{lg}] calibration note of {model}: decimals in the terminal version, percent only in the page version ({pct_[pct_.index('('):][:90]}...)")
 
 
 def page_checks(lang="uk"):
@@ -207,7 +231,7 @@ def page_checks(lang="uk"):
               f"{tag} self-contained: none of {checks_banned} anywhere, url() only for the in-page pattern, exactly two inline scripts (the data and the code)" + (f" (found {found})" if found else ""))
         data = extract_data(page)
         dbad = []
-        if data["lang"] != lang or data["mode"] != mode or data["thr"] != {str(h): thr[h] for h in fm.HORIZONS} or data["edges"] != fm.EDGES:
+        if data["lang"] != lang or data["mode"] != mode or data["thr"] != {str(h): thr[h] for h in fm.HORIZONS} or data["edges"] != fm.EDGES or data["thrPc"] != {str(h): f"{100 * thr[h]:.0f}%" for h in fm.HORIZONS}:
             dbad.append("header fields")
         iso_of = {n: iso for n, (iso, _) in fm.OURS.items()}
         mod = {u["iso"]: u for u in data["units"] if u["modelled"]}
@@ -274,9 +298,12 @@ def page_checks(lang="uk"):
         # the page around the map
         topbar = page[page.index('<header class="topbar">'):page.index("</header>")]
         needs = {"sentence": T("ui_sentence", lang), "brand": T("ui_brand", lang), "fresh pill": 'id="fresh"', "model": T("ui_model", lang, model=payload["model"]), "version": payload["version"],
-                 "origin": T("ui_origin", lang, hm=offset, t=origin), "how button": f'id="how"', "how label": T("ui_how", lang)}
-        miss = [k for k, v in needs.items() if v not in topbar]
-        check(not miss, f"{tag} the top bar has the sentence, the freshness pill, the model and its version, the origin hour in Kyiv time and UTC, and the how-to button" + (f" (missing {miss})" if miss else ""))
+                 "origin": T("ui_origin_pill", lang, hm=offset), "how button": f'id="how"', "how label": T("ui_how", lang)}
+        topbar_text = re.sub(r"<[^>]+>", "", topbar)
+        miss = [k for k, v in needs.items() if v not in (topbar_text if k == "origin" else topbar)]
+        check(not miss, f"{tag} the top bar has the sentence, the freshness pill, the model and its version, the origin hour in Kyiv time, and the how-to button" + (f" (missing {miss})" if miss else ""))
+        origin_pill = re.sub(r"<[^>]+>", "", re.search(r'<span class="pill">(.*?)</span></span>|<span class="pill">(.*?)</span>(?=\s*<button)', topbar, re.S).group(0))
+        check(origin_pill == T("ui_origin_pill", lang, hm=offset) and "UTC" not in origin_pill, f"{tag} the origin pill shows the Kyiv time only ({origin_pill})")
         fresh_txt = re.search(r'<span id="fresh-text">(.*?)</span>', page).group(1)
         check(fresh_txt == (T("ui_replay_pill", lang) if mode == "replay" else T("ui_fresh_static", lang, made=pd.Timestamp(payload["made"]))), f"{tag} the freshness pill has a text before any script runs ({fresh_txt})")
         import html as _html
@@ -284,8 +311,8 @@ def page_checks(lang="uk"):
         items = T("ui_how_items", lang)
         check(all(h in pop and t in pop for h, t in items) and len(items) == 6 and T("ui_how_title", lang) in pop and 'role="dialog"' in pop and ' hidden>' in page[page.index('id="howpop"') - 5:page.index('id="howpop"') + 200],
               f"{tag} the how-to popover has its six explanations and the about section, and starts closed")
-        about_miss = [n for n in [payload["model_text"]] + payload["notes"] if n.lstrip("!") not in pop]
-        check(not about_miss, f"{tag} every note (freshness, calibration, status lines) is in the popover's about section" + (f": {about_miss[:2]}" if about_miss else ""))
+        about_miss = [n for n in [T("ui_origin", lang, hm=offset, t=origin), payload["model_text"]] + payload["notes"] if n.lstrip("!") not in pop]
+        check(not about_miss, f"{tag} the popover's about section has the origin hour with its UTC time, the model, and every note (freshness, calibration, status lines)" + (f": {about_miss[:2]}" if about_miss else ""))
         warn = T("pg_warn_prefixes", lang) + ("!",)
         has_warn = any(n.startswith(warn) for n in payload["notes"])
         check(('class="banner"' in page) == has_warn, f"{tag} the warning banner is there exactly when a note is a warning ({'training-period note' if has_warn else 'none'})")
@@ -300,12 +327,21 @@ def page_checks(lang="uk"):
         tbl_ok = len(rows_html) == 24 and [r[0] for r in rows_html] == sorted([r[0] for r in rows_html], key=lambda n: sort_key(n, lang))
         for name, now, cells in rows_html:
             r = next(v for k, v in by.items() if short_name(k, lang) == name)
-            vals = re.findall(rf">(\d\.\d{{3}}) ({T('pg_above', lang)}|{T('pg_below', lang)})<", cells)
-            tbl_ok &= [v[0] for v in vals] == [f"{r['p'][h]:.3f}" for h in fm.HORIZONS]
+            vals = re.findall(rf">(\d+)% ({T('pg_above', lang)}|{T('pg_below', lang)})<", cells)
+            tbl_ok &= [v[0] for v in vals] == [f"{100 * r['p'][h]:.0f}" for h in fm.HORIZONS]
             tbl_ok &= [v[1] for v in vals] == [T("pg_above" if r["p"][h] >= thr[h] else "pg_below", lang) for h in fm.HORIZONS]
             tbl_ok &= (now == T("pg_alert_yes", lang)) == r["now"]
         check(tbl_ok and T("ui_noscript", lang) in nos, f"{tag} the fallback table (no script) has all 24 rows, in alphabetical order of the language, with the same numbers")
         check(f'<html lang="{lang}">' in page and "color-scheme:dark" in page and 'name="viewport"' in page, f"{tag} page language, one dark colour scheme, viewport")
+        no_style = re.sub(r"<style>.*?</style>|<script.*?</script>|<path [^>]*>|<svg id=\"map\"[^>]*>", "", page, flags=re.S)
+        texts = re.sub(r"<[^>]+>", " ", no_style)
+        attrs = " ".join(re.findall(r'(?:aria-label|title)="([^"]*)"', page))
+        js_texts = " ".join(str(v) for v in list(data["S"].values()) + [data["thrText"]])
+        dec = re.findall(r".{12}\d\.\d.{6}", texts + " " + attrs + " " + js_texts)
+        check(not dec, f"{tag} no raw decimal number anywhere on the page (text, labels, titles, the script's texts): probabilities and thresholds are percent" + (f" (found {dec[:3]})" if dec else ""))
+        if lang == "uk":
+            longd = re.findall(r".{10}[\u2012-\u2015\u2212].{10}", texts + " " + attrs + " " + js_texts)
+            check(not longd, f"{tag} no long dash anywhere in the Ukrainian page" + (f": {longd[:3]}" if longd else ""))
         css = page[page.index("<style>"):page.index("</style>")]
         raw_hex = re.findall(r"[:(,\s]#[0-9a-fA-F]{3,8}\b", re.sub(r":root\{.*?\n  --sp-1", ":root{ --sp-1", css, count=1, flags=re.S))
         raw_px = [m for m in re.findall(r"([^{}]*)\{[^}]*font-size:(\d+)px", css) if not re.search(r"\.nm|\.pc|\.nodata|\.badge text|\.hist svg text|\.mini|\.chip b\.bd|\.strip b|\.bignum", m[0])]
@@ -448,6 +484,7 @@ def at_check():
                 has_cyr = bool(re.search("[а-яіїєґ]", out.lower()))
                 check(has_cyr == (lg == "uk"), f"  terminal output {'is' if lg == 'uk' else 'has no'} Ukrainian")
                 if lg == "uk":
+                    check("Що прогнозуємо: чи почнеться нова тривога протягом наступних H годин." in out and "Ціль" not in out and not re.search("[\u2012-\u2015\u2212]", out), "  and the terminal output has the new 'Що прогнозуємо' line and no long dash")
                     left = [w for w in ("oblast", "Kyivska", "Kyiv City", "chance", "alert", "yesterday", "Inputs", "Under alert", "Next new") if w in out]
                     check(not left, "  and nothing of the terminal text is left in English" + (f": {left}" if left else ""))
                     if "--all" in argv:
@@ -498,6 +535,7 @@ if __name__ == "__main__":
     i18n_checks()
     freshness_checks()
     history_checks()
+    percent_checks()
     page_checks("uk")
     page_checks("en")
     colour_checks()

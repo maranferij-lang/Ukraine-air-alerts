@@ -70,10 +70,10 @@ const rd = async p => p.evaluate(() => JSON.parse(document.getElementById('data'
     pressed: document.querySelector('.u[data-iso="UA-63"]').getAttribute('aria-pressed'), selD: document.getElementById('hl-sel').getAttribute('d') === document.getElementById('p-UA-63').getAttribute('d'), selVis: document.getElementById('hl-sel').getAttribute('visibility'),
     live: document.getElementById('live').textContent, bars: [...document.querySelectorAll('#bars .brow')].map(b => ({ h: b.dataset.h, on: b.classList.contains('on'), w: b.querySelector('.track i').style.width, tick: b.querySelector('.tick').style.left, val: b.querySelector('.bval').textContent, label: b.querySelector('.blabel').textContent })) }));
   ok(sel.h2 === u.full && sel.big === u.pc['1'].slice(0, -1) && sel.unit === '%', `click selects: name "${sel.h2}" and the big percentage "${sel.big}%" for 1 h`);
-  ok(sel.thr.includes(D.thr['1'].toFixed(3)) && sel.thr.startsWith(u.p['1'] >= D.thr['1'] ? '▲' : '▽'), `click selects: threshold chip says above/below with the threshold ("${sel.thr}")`);
+  ok(sel.thr.includes(D.thrPc['1']) && sel.thr.startsWith(u.p['1'] >= D.thr['1'] ? '▲' : '▽'), `click selects: threshold chip says above/below with the threshold ("${sel.thr}")`);
   ok(sel.alert.includes('on') === u.now && sel.alertText.includes(D.S[u.now ? 'ui_alert_yes' : 'ui_alert_no']), `click selects: alert status right (${u.now ? 'running' : 'none'})`);
   ok(sel.pressed === 'true' && sel.selD && sel.selVis === 'visible' && sel.live.includes(u.name), 'click selects: aria-pressed, the selection outline on the right shape, the screen-reader text');
-  ok(sel.bars.length === 3 && sel.bars.every((b, i) => { const h = [1, 3, 6][i]; return +b.h === h && Math.abs(parseFloat(b.w) - u.p[h] * 100) < 0.01 && Math.abs(parseFloat((b.tick.match(/calc\(([\d.]+)%/) || [0, 'x'])[1]) - D.thr[h] * 100) < 0.01 && b.val.startsWith(u.p[h].toFixed(3)); }) && sel.bars[0].on,
+  ok(sel.bars.length === 3 && sel.bars.every((b, i) => { const h = [1, 3, 6][i]; return +b.h === h && Math.abs(parseFloat(b.w) - u.p[h] * 100) < 0.01 && Math.abs(parseFloat((b.tick.match(/calc\(([\d.]+)%/) || [0, 'x'])[1]) - D.thr[h] * 100) < 0.01 && b.val.startsWith(u.pc[h]); }) && sel.bars[0].on,
     'three bars for 1 / 3 / 6 h: width = probability, threshold tick at the threshold, value with triangle, the chosen horizon marked');
   await p.click('.brow[data-h="6"]');
   ok(await p.evaluate(() => document.body.dataset.h === '6' && document.querySelector('#big .bignum').textContent) === u.pc['6'].slice(0, -1), 'clicking a bar switches the horizon (map, control and big number)');
@@ -125,6 +125,73 @@ const rd = async p => p.evaluate(() => JSON.parse(document.getElementById('data'
   if (shots) { await p.click('.u[data-iso="UA-63"] path'); await p.mouse.move(700, 800); await p.screenshot({ path: path.join(shots, 'desktop_uk_selected.png') }); await p.keyboard.press('Escape'); await p.screenshot({ path: path.join(shots, 'desktop_uk_default.png') }); }
   await p.context().close();
 
+  // ------------------------------------------------------------------ no raw decimal anywhere, in any state
+  p = await open('uk_live_4.html', 1440, 900); D = await rd(p);
+  const decimals = async () => p.evaluate(() => {
+    const t = [document.body.innerText, ...[...document.querySelectorAll('[aria-label],[title]')].map(e => (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')), ...[...document.querySelectorAll('svg title')].map(e => e.textContent), document.getElementById('live').textContent].join(' | ');
+    return (t.match(/.{10}\d\.\d.{6}/g) || []);
+  });
+  let dec = [];
+  for (const h of [1, 3, 6]) { await p.click(`#seg button[data-h="${h}"]`); dec = dec.concat(await decimals()); }
+  await p.click('.u[data-iso="UA-63"] path');
+  for (const h of [1, 3, 6]) { await p.click(`#seg button[data-h="${h}"]`); dec = dec.concat(await decimals()); }
+  await p.click('#how'); dec = dec.concat(await decimals());
+  ok(dec.length === 0, `no raw decimal number on the page in any state: default, selected, all three horizons, popover open, titles and labels ${JSON.stringify(dec.slice(0, 3))}`);
+  const pillTxt = await p.evaluate(() => [...document.querySelectorAll('.pills .pill')].map(e => e.textContent));
+  ok(pillTxt.length === 3 && /\(Київ\)/.test(pillTxt[2]) && !/UTC/.test(pillTxt[2]), `the origin pill is short, Kyiv time only ("${pillTxt[2]}")`);
+  ok(/UTC/.test(await p.textContent('#howpop')) && (await p.textContent('#howpop')).includes('12:00 UTC'), 'the how-to popover has the origin hour in UTC');
+  ok(!/[\u2012-\u2015\u2212]/.test(await p.evaluate(() => document.body.innerText + [...document.querySelectorAll('[aria-label],[title]')].map(e => e.getAttribute('aria-label') + e.getAttribute('title')).join(''))), 'no long dash anywhere in the Ukrainian page');
+  await p.context().close();
+
+  // ------------------------------------------------------------------ labels never touch an oblast border
+  async function labelReport(p, w, maxHidden, tag) {
+    await sleep(450);
+    const fit = await p.evaluate((w) => {
+      const svg = document.getElementById('map'), ctm = svg.getScreenCTM(), inv = ctm.inverse(), k = ctm.a, pt = svg.createSVGPoint(), bad = [], px = [];
+      let hidden = 0, scaled = 0, dropped = 0;
+      const toSvg = (x, y) => { pt.x = x; pt.y = y; return pt.matrixTransform(inv); };
+      for (const hz of [1, 3, 6]) {
+        document.body.setAttribute('data-h', hz);
+        for (const g of svg.querySelectorAll('.u')) {
+          const l = g.querySelector('.lbls'); if (!l) continue;
+          if (l.classList.contains('nolabel')) { if (hz === 1) hidden++; continue; }
+          const els = [...l.querySelectorAll('text, circle')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+          if (!els.length) continue;
+          let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+          els.forEach(e => { const r = e.getBoundingClientRect(); x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom); });
+          const m = 1.5, path = g.querySelector('path'); let off = 0;
+          const pts = [];
+          for (let x = x0 - m; x <= x1 + m; x += 2) { pts.push([x, y0 - m], [x, y1 + m]); }
+          for (let y = y0 - m; y <= y1 + m; y += 2) { pts.push([x0 - m, y], [x1 + m, y]); }
+          for (const [x, y] of pts) { const q = toSvg(x, y); if (!path.isPointInFill(q)) { off++; } }
+          if (off) bad.push(g.dataset.iso + ' h' + hz + ' (' + off + ' of ' + pts.length + ' points of its outline are outside)');
+          if (g.dataset.iso === 'UA-32') { const c = document.getElementById('p-UA-30').getBBox(), a = toSvg(x0 - m, y0 - m), b = toSvg(x1 + m, y1 + m); if (b.x > c.x && a.x < c.x + c.width && b.y > c.y && a.y < c.y + c.height) bad.push('UA-32 h' + hz + ' overlaps Kyiv City'); }
+          const s = parseFloat(l.dataset.s) || 1;
+          const nmEl = [...l.querySelectorAll('.nm')].find(e => e.getBoundingClientRect().width > 0), pcEl = [...l.querySelectorAll('.pc')].find(e => e.getBoundingClientRect().width > 0);
+          if (nmEl) px.push(['name', g.dataset.iso, parseFloat(getComputedStyle(nmEl).fontSize) * s * k]);
+          if (pcEl) px.push(['pct', g.dataset.iso, parseFloat(getComputedStyle(pcEl).fontSize) * s * k]);
+          if (hz === 1) { if (s < 1) scaled++; if (/n/.test(l.dataset.s || '') && g.querySelector('.nm') && getComputedStyle(g.querySelector('.nm')).display === 'none' && w > 820) dropped++; }
+        }
+      }
+      return { bad, hidden, scaled, dropped, minName: Math.min(...px.filter(a => a[0] === 'name').map(a => a[2]), 99), minPct: Math.min(...px.filter(a => a[0] === 'pct').map(a => a[2]), 99), k };
+    }, w);
+    ok(fit.bad.length === 0, `${tag}${w} px wide: no label touches or crosses an oblast border (3 horizons, 1.5 px clearance)${fit.bad.length ? ' ' + JSON.stringify(fit.bad.slice(0, 4)) : ''}`);
+    ok(fit.hidden <= maxHidden, `${tag}${w} px wide: ${fit.hidden} label(s) left out because they cannot fit at a readable size (at most ${maxHidden}); ${fit.scaled} shrunk, ${fit.dropped} without the name`);
+    ok(fit.minPct >= 4.8 && (w <= 820 || fit.minName >= 6.3 || fit.minName === 99), `${tag}${w} px wide: smallest text on the screen: name ${fit.minName === 99 ? 'none shown' : fit.minName.toFixed(1)} px, percentage ${fit.minPct.toFixed(1)} px`);
+    if (shots && w === 1440) await p.screenshot({ path: path.join(shots, 'desktop_labels.png') });
+  }
+  for (const [w, h, maxHidden] of [[1440, 900, 0], [1920, 1080, 0], [1100, 720, 2], [390, 844, 10]]) {
+    p = await open('uk_live_4.html', w, h);
+    await labelReport(p, w, maxHidden, '');
+    await p.context().close();
+  }
+  p = await open('en_live_4.html', 1440, 900); await labelReport(p, 1440, 0, 'English page, '); await p.context().close();
+  p = await open('uk_live_4.html', 1440, 900);   // the same page resized: the labels are fitted again
+  await p.setViewportSize({ width: 1100, height: 720 }); await labelReport(p, 1100, 2, 'after resizing to ');
+  await p.setViewportSize({ width: 390, height: 844 }); await labelReport(p, 390, 10, 'after resizing to ');
+  await p.setViewportSize({ width: 1440, height: 900 }); await labelReport(p, 1440, 0, 'after resizing back to ');
+  await p.context().close();
+
   // ------------------------------------------------------------------ history says so when there is none
   for (const [file, key, what] of [['uk_live_1.html', 'ui_hist_none', 'only one run so far'], ['uk_replay_0.html', 'ui_hist_replay', 'a replay of a past hour']]) {
     p = await open(file, 1440, 900); D = await rd(p);
@@ -165,6 +232,7 @@ const rd = async p => p.evaluate(() => JSON.parse(document.getElementById('data'
     return { panel: r('#panel'), strip: r('.strip'), pos: getComputedStyle(document.getElementById('panel')).position, map: r('#map'), at: (() => { const s = document.querySelector('.strip').getBoundingClientRect(); const e = document.elementFromPoint(s.x + s.width / 2, s.y + s.height / 2); return !!(e && e.closest('.strip')); })() }; });
   ok(ph.pos === 'fixed' && ph.panel.h > 70 && ph.panel.h < 110 && Math.abs(ph.panel.b - ph.strip.y) < 2, `phone: the panel is a fixed bottom sheet, peeking (${Math.round(ph.panel.h)} px) just above the footer line`);
   ok(ph.strip.b <= 844.5 && ph.at && ph.strip.w >= 389, 'phone: the footer line (study model, follow official alerts) is at the bottom and not covered by the sheet');
+  ok(await p.evaluate(() => [...document.querySelectorAll('.pills > *')].every(e => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= window.innerWidth && r.width > 0; })), 'phone: the pills (data age, model, origin hour, how to read) are all fully on the screen (they wrap, no sideways scrolling)');
   ok(ph.map.w >= 340 && ph.map.y > 100, `phone: the map fills the width (${Math.round(ph.map.w)} px)`);
   ok(await p.evaluate(() => { const k = document.getElementById('kchip'); const b = k.getBoundingClientRect(); return b.width > 60 && b.height >= 30 && getComputedStyle(document.querySelector('.callout')).display === 'none' && k.textContent.includes('%'); }), 'phone: Kyiv City is a button above the map (the call-out is for large screens)');
   if (shots) await p.screenshot({ path: path.join(shots, 'phone_uk_default.png') });

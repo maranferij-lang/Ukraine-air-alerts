@@ -202,7 +202,7 @@ def write_replay_map(t, round_note, status, map_rows, lang="uk"):
     from scripts import forecast_map
     from scripts.live_api import calibration_note, model_version, now_utc
     thr = {H: json.loads((MODELS / "frozen.json").read_text())["thresholds"][str(H)]["lgbm"] for H in HORIZONS}
-    note = calibration_note("v1", lang)
+    note = calibration_note("v1", lang, percent=True)  # the page shows probabilities as percent only
     notes = ([round_note] if round_note else []) + status + ([note] if note else [])
     forecast_map.write_or_warn(dict(origin=t, made=now_utc(), mode="replay", history=None, model="v1", version=model_version("v1"), thresholds=thr, notes=notes, rows=map_rows, lang=lang,
                                     model_text=T("map_replay", lang)))

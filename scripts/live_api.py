@@ -152,7 +152,7 @@ def now_utc():
     return pd.Timestamp.now(tz="UTC")
 
 
-def calibration_note(model="v1", lang="en"):
+def calibration_note(model="v1", lang="en", percent=False):
     """One line about calibration from the model's own evaluation table: v1: the forward test; v2: its held-out test window. None if the table is not there."""
     path, label, name = ((ROOT / "results" / "forward_api" / "calibration.md", T("cal_v1", lang), "LightGBM") if model == "v1"
                          else (ROOT / "results" / "v2" / "calibration.md", T("cal_v2", lang), "v2 LightGBM"))
@@ -170,16 +170,16 @@ def calibration_note(model="v1", lang="en"):
     low = all(rows[H][0] < rows[H][1] for H in HORIZONS)
     high = all(rows[H][0] > rows[H][1] for H in HORIZONS)
     word = T("cal_low", lang) if low else T("cal_high", lang) if high else T("cal_mid", lang)
-    return T("cal_note", lang, label=label, word=word, items=", ".join(T("cal_item", lang, p=rows[H][0], o=rows[H][1], H=H) for H in HORIZONS),
+    return T("cal_note", lang, label=label, word=word, items=", ".join(T("cal_item_pct", lang, p=100 * rows[H][0], o=100 * rows[H][1], H=H) if percent else T("cal_item", lang, p=rows[H][0], o=rows[H][1], H=H) for H in HORIZONS),
              tail=T("cal_tail_low", lang) if low else T("cal_tail", lang))
 
 
-def ago(now, ts, lang="en"):
+def ago(now, ts, lang="en", whole_hours=False):
     """How long before `now` an API timestamp is: 'just now' for anything under a minute, and also for a timestamp ahead of our clock (the API's clock may run ahead of ours)."""
     d = (now - ts).total_seconds()
     if d < 60:
         return T("ago_now", lang)
-    return T("ago_min", lang, n=d / 60) if d < 3 * 3600 else T("ago_h", lang, n=d / 3600)
+    return T("ago_min", lang, n=d / 60) if d < 3 * 3600 else T("ago_h_whole" if whole_hours else "ago_h", lang, n=d / 3600)
 
 
 def forward_test_note(lang="en"):
@@ -268,10 +268,13 @@ def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
     ends = st["end"][(st["end"].dt.year > 2000) & (st["end"] <= now)]
     newest_end = ends.max() if len(ends) else None
     upd = [pd.Timestamp(a["lastUpdate"]) for a in (active or []) if isinstance(a, dict) and a.get("lastUpdate")]
-    fresh = (T("fresh_head", lang, now=now, start=newest_start, ago=ago(now, newest_start, lang))
-             + (T("fresh_end", lang, end=newest_end) if newest_end is not None else "")
-             + (T("fresh_upd", lang, upd=max(upd), ago=ago(now, max(upd), lang)) if upd else "")
-             + T("fresh_tail", lang))
+    def fresh_text(whole_hours):
+        return (T("fresh_head", lang, now=now, start=newest_start, ago=ago(now, newest_start, lang, whole_hours))
+                + (T("fresh_end", lang, end=newest_end) if newest_end is not None else "")
+                + (T("fresh_upd", lang, upd=max(upd), ago=ago(now, max(upd), lang, whole_hours)) if upd else "")
+                + T("fresh_tail", lang))
+    fresh = fresh_text(False)
+    fresh_page = fresh_text(True)  # the page shows no decimal numbers anywhere, so "3 h" and not "3.0 h"
     local = t.tz_convert(KYIV)
     model_text = T("model_v1" if model == "v1" else "model_v2", lang)
     print(textwrap.fill(T("live_head", lang, t=t, hm=f"{local:%H:%M}", model_text=model_text), 100))
@@ -297,7 +300,8 @@ def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
     print(pd.DataFrame(rows_out, columns=T("live_cols", lang)).to_string(index=False))
     print(T("logged", lang, n=n_logged, path=PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG))
     from scripts import forecast_map
-    notes = [fresh] + ([left_out] if left_out else []) + ([note] if note else [])
+    note_page = calibration_note(model, lang, percent=True)  # the page shows probabilities as percent only
+    notes = [fresh_page] + ([left_out] if left_out else []) + ([note_page] if note_page else [])
     forecast_map.write_or_warn(dict(origin=t, made=now, mode="live", model=model, version=model_version(model), model_text=T("map_live", lang) + model_text,
                                     thresholds=thr, notes=notes, rows=map_rows, lang=lang,
                                     history=forecast_map.history_from_log(PRED_LOG, model_version(model))))  # the log already has this run

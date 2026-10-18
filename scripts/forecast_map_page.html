@@ -64,7 +64,7 @@ svg text{font-family:var(--font);text-anchor:middle;pointer-events:none}
 .u.nd path{fill:url(#hatch);cursor:default}
 .u:focus{outline:none}
 .nm{font-size:9px;font-weight:500}.pc{font-size:12.5px;font-weight:700}.kv{text-anchor:start}
-.lab{display:none}
+.lab{display:none}.noname .nm{display:none}.nolabel{display:none}
 .badge circle{fill:var(--alert);stroke:var(--map);stroke-width:1.5}.badge text{fill:var(--white);font-size:11px;font-weight:800}
 .nodata{fill:var(--text-2);font-size:9px}
 .leader{stroke:var(--text-2);stroke-width:1.2;fill:none}.callout{cursor:pointer}.callout .box{fill:var(--surface);stroke:var(--line-2);stroke-width:1.5}.callout text{fill:var(--text)}
@@ -141,9 +141,9 @@ details.all .rows{margin-top:var(--sp-2)}
   .logo{width:30px;height:30px}
   .brand{flex:1 1 100%}
   .brand-sub{font-size:var(--fs-xs);line-height:1.3}
-  .pills{flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:2px;scrollbar-width:none}
-  .pills::-webkit-scrollbar{display:none}
-  .pill,.btn{flex:none;height:28px}
+  .pills{flex-wrap:wrap;width:100%;gap:var(--sp-1) var(--sp-2)}
+  .pill,.btn{flex:none;height:28px;padding:0 var(--sp-2);font-size:var(--fs-xs);gap:var(--sp-1)}
+  .pl{display:none}
   .main{display:block;position:relative;min-height:0}
   .mapwrap{height:100%}
   .stage{padding:var(--sp-2) var(--sp-3) var(--sp-2)}
@@ -153,7 +153,7 @@ details.all .rows{margin-top:var(--sp-2)}
   .callout{display:none}
   .kchip{display:inline-flex;align-items:center;gap:var(--sp-2);height:36px;padding:0 var(--sp-3);border-radius:var(--r-pill);border:1px solid var(--line-2);background:var(--surface);font-weight:600;font-size:var(--fs-sm)}
   .fp{display:none}
-  .nm{display:none}.pc{font-size:22px}.badge{transform:translate(37px,-26px)}.badge text{font-size:14px}
+  .nm{display:none}.pc{font-size:18px}.badge{transform:translate(30px,-22px)}.badge text{font-size:13px}
   .panel{position:fixed;left:0;right:0;bottom:var(--strip-h);height:var(--sheet-peek);overflow:hidden;border-left:0;border-top:1px solid var(--line-2);border-radius:var(--r-lg) var(--r-lg) 0 0;box-shadow:0 -12px 32px rgba(0,0,0,.55);z-index:20;transition:height .25s ease}
   body[data-sheet=open] .panel{height:min(46dvh,420px)}
   .sheet-head{display:flex;flex-direction:column;align-items:center;gap:var(--sp-2);width:100%;height:var(--sheet-peek);flex:none;padding:var(--sp-2) var(--sp-4);border:0;background:transparent;text-align:center}
@@ -232,7 +232,7 @@ details.all .rows{margin-top:var(--sp-2)}
   function bin(p) { var k = 0; D.edges.forEach(function (e) { if (p >= e) k++; }); return k; }
   function above(u, h) { return u.p[h] >= D.thr[h]; }
   function tri(u, h) { return above(u, h) ? '▲' : '▽'; }
-  function f3(x) { return x.toFixed(3); }
+  function pcv(x) { return (x * 100).toFixed(0) + '%'; }
   function modelled() { return D.units.filter(function (u) { return u.modelled; }); }
   function ranked(h) { return modelled().sort(function (a, b) { return (b.p[h] - a.p[h]) || (a.idx - b.idx); }); }
   function badge() { return el('span', 'mini', '!'); }
@@ -339,15 +339,15 @@ details.all .rows{margin-top:var(--sp-2)}
     var a = el('div', 'alertrow' + (u.now ? ' on' : '')); if (u.now) a.appendChild(badge()); a.appendChild(el('span', '', u.now ? S.ui_alert_yes : S.ui_alert_no)); a.id = 'alertrow'; pb.appendChild(a);
     var big = el('div', 'big'); big.appendChild(el('span', 'bignum', u.pc[h].slice(0, -1))); big.appendChild(el('span', 'bigunit', '%')); big.id = 'big'; pb.appendChild(big);
     pb.appendChild(el('div', 'bigcap', fmt(S.ui_big_cap, { H: h })));
-    var ab = above(u, h), t = el('span', 'thr ' + (ab ? 'above' : 'below'), tri(u, h) + ' ' + fmt(ab ? S.ui_thr_above : S.ui_thr_below, { thr: f3(D.thr[h]) })); t.id = 'thr'; pb.appendChild(t);
+    var ab = above(u, h), t = el('span', 'thr ' + (ab ? 'above' : 'below'), tri(u, h) + ' ' + fmt(ab ? S.ui_thr_above : S.ui_thr_below, { thr: D.thrPc[h] })); t.id = 'thr'; pb.appendChild(t);
     pb.appendChild(el('h3', '', S.ui_bars));
     var bars = el('div', 'bars'); bars.id = 'bars';
     HZ.forEach(function (k) {
       var b = el('button', 'brow' + (k === h ? ' on' : '')); b.type = 'button'; b.dataset.h = k;
       b.appendChild(el('span', 'blabel', fmt(S.ui_seg_item, { H: k })));
       var tr = el('span', 'track'), f = el('i'); f.style.width = (u.p[k] * 100) + '%'; f.style.background = 'var(--c' + bin(u.p[k]) + ')'; tr.appendChild(f);
-      var tk = el('span', 'tick'); tk.style.left = 'calc(' + (D.thr[k] * 100).toFixed(2) + '% - 1px)'; tk.title = S.ui_hist_thr + ' ' + f3(D.thr[k]); tr.appendChild(tk); b.appendChild(tr);
-      b.appendChild(el('span', 'bval', f3(u.p[k]) + ' ' + tri(u, k)));
+      var tk = el('span', 'tick'); tk.style.left = 'calc(' + (D.thr[k] * 100).toFixed(2) + '% - 1px)'; tk.title = S.ui_hist_thr + ' ' + D.thrPc[k]; tr.appendChild(tk); b.appendChild(tr);
+      b.appendChild(el('span', 'bval', u.pc[k] + ' ' + tri(u, k)));
       b.addEventListener('click', function () { setH(k); });
       bars.appendChild(b);
     });
@@ -369,15 +369,15 @@ details.all .rows{margin-top:var(--sp-2)}
     function add(tag, attrs, text) { var e = document.createElementNS(ns, tag); Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); }); if (text !== undefined) e.textContent = text; s.appendChild(e); return e; }
     [0, 0.5, 1].forEach(function (g) { add('line', { x1: L, x2: W - R, y1: y(g), y2: y(g), stroke: 'var(--line)', 'stroke-width': 1 }); add('text', { x: 2, y: y(g) + 3 }, Math.round(g * 100) + '%'); });
     add('line', { x1: L, x2: W - R, y1: y(D.thr[h]), y2: y(D.thr[h]), stroke: 'var(--warn)', 'stroke-width': 1.2, 'stroke-dasharray': '4 3' });
-    add('text', { x: L + 2, y: y(D.thr[h]) - 3, fill: 'var(--warn)', style: 'fill:var(--warn)' }, S.ui_hist_thr + ' ' + f3(D.thr[h]));
+    add('text', { x: L + 2, y: y(D.thr[h]) - 3, fill: 'var(--warn)', style: 'fill:var(--warn)' }, S.ui_hist_thr + ' ' + D.thrPc[h]);
     var pts = runs.map(function (r, i) { return x(i) + ',' + y(r.p[u.iso][h]); }).join(' ');
     add('polyline', { points: pts, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
     runs.forEach(function (r, i) {
       var last = i === n - 1, c = add('circle', { cx: x(i), cy: y(r.p[u.iso][h]), r: last ? 4.5 : 3, fill: 'var(--accent)', stroke: 'var(--surface)', 'stroke-width': 2 });
-      var tt = document.createElementNS(ns, 'title'); tt.textContent = r.lbl + ': ' + f3(r.p[u.iso][h]); c.appendChild(tt);
+      var tt = document.createElementNS(ns, 'title'); tt.textContent = r.lbl + ': ' + pcv(r.p[u.iso][h]); c.appendChild(tt);
     });
     var lastP = runs[n - 1].p[u.iso][h];
-    add('text', { x: x(n - 1) - 8, y: Math.max(T + 8, y(lastP) - 8), style: 'text-anchor:end;fill:var(--text);font-weight:700;font-size:11px' }, Math.round(lastP * 100) + '%');
+    add('text', { x: x(n - 1) - 8, y: Math.max(T + 8, y(lastP) - 8), style: 'text-anchor:end;fill:var(--text);font-weight:700;font-size:11px' }, pcv(lastP));
     add('text', { x: x(0), y: HT - 6 }, runs[0].lbl);
     add('text', { x: x(n - 1), y: HT - 6, 'text-anchor': 'end', style: 'text-anchor:end' }, runs[n - 1].lbl);
     box.appendChild(s); box.appendChild(el('div', 'cap', fmt(S.ui_hist_n, { n: n, last: runs[n - 1].lbl })));
@@ -419,8 +419,78 @@ details.all .rows{margin-top:var(--sp-2)}
   }
   if (D.mode === 'live') { tick(); setInterval(tick, 30000); }
 
+  /* ---------- labels never touch an oblast border: measured here, then shrunk or moved until they fit ---------- */
+  var SCALES = [1, 0.93, 0.86, 0.8, 0.74, 0.68, 0.62, 0.56], pt = svg.createSVGPoint();
+  function inPath(path, x, y) { pt.x = x; pt.y = y; return path.isPointInFill(pt); }
+  var STEP = 3;  // sampling step along a label's outline, in map units: about 2 screen pixels (set in fit)
+  function rectOk(path, enc, cx, cy, hw, hh) {
+    var i, x, y;
+    for (i = 0; i < enc.length; i++) { var e = enc[i]; if (cx + hw > e.x0 && cx - hw < e.x1 && cy + hh > e.y0 && cy - hh < e.y1) return false; }
+    if (!inPath(path, cx - hw, cy - hh) || !inPath(path, cx + hw, cy - hh) || !inPath(path, cx - hw, cy + hh) || !inPath(path, cx + hw, cy + hh) || !inPath(path, cx, cy)) return false;
+    for (x = cx - hw; x <= cx + hw; x += STEP) if (!inPath(path, x, cy - hh) || !inPath(path, x, cy + hh)) return false;
+    for (y = cy - hh; y <= cy + hh; y += STEP) if (!inPath(path, cx - hw, y) || !inPath(path, cx + hw, y)) return false;
+    for (y = cy - hh + STEP; y < cy + hh; y += STEP) for (x = cx - hw + STEP; x < cx + hw; x += STEP) if (!inPath(path, x, y)) return false;  // the inside too: a coastline notch or a lake can lie within the outline
+    return true;
+  }
+  function enclaves(unit) {  // small shapes that lie inside this shape's box (Kyiv City in Kyivska oblast, Sevastopol in Crimea): the label keeps clear of them too
+    var a = unit.querySelector('path').getBBox(), out = [];
+    $$('.u', svg).forEach(function (o) {
+      if (o === unit) return; var b = o.querySelector('path').getBBox();
+      if (b.x > a.x && b.y > a.y && b.x + b.width < a.x + a.width && b.y + b.height < a.y + a.height && b.width * b.height < 0.1 * a.width * a.height) out.push({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.height });
+    });
+    return out;
+  }
+  function place(g, o, margin, last) {  // the largest scale (nearest to the first position) at which the label fits, or null
+    var unit = g.parentNode, path = unit.querySelector('path'), pb = path.getBBox(), enc = enclaves(unit);
+    var ox = (o.x0 + o.x1) / 2, oy = (o.y0 + o.y1) / 2, w = o.x1 - o.x0, h = o.y1 - o.y0;
+    for (var si = 0; si <= last; si++) {
+      var s = SCALES[si], hw = w * s / 2 + margin, hh = h * s / 2 + margin, cands = [], x, y, i, maxd = si <= 2 ? 1600 : Infinity;
+      if (rectOk(path, enc, ox, oy, hw, hh)) return { s: s, cx: ox, cy: oy, ox: ox, oy: oy };
+      for (x = pb.x + hw; x <= pb.x + pb.width - hw; x += 4) for (y = pb.y + hh; y <= pb.y + pb.height - hh; y += 4) { var d = (x - ox) * (x - ox) + (y - oy) * (y - oy); if (d <= maxd) cands.push([x, y, d]); }
+      cands.sort(function (a, b) { return a[2] - b[2]; });
+      for (i = 0; i < cands.length; i++) if (rectOk(path, enc, cands[i][0], cands[i][1], hw, hh)) return { s: s, cx: cands[i][0], cy: cands[i][1], ox: ox, oy: oy };
+    }
+    return null;
+  }
+  function measure(g) {  // the box of the whole label (name, percentage, badge) over the three horizons: the percentage line differs a little between them
+    var o = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 }, cur = body.getAttribute('data-h');
+    HZ.forEach(function (h) {
+      body.setAttribute('data-h', h);
+      var b = g.getBBox(); if (!b.width) return;
+      o.x0 = Math.min(o.x0, b.x); o.y0 = Math.min(o.y0, b.y); o.x1 = Math.max(o.x1, b.x + b.width); o.y1 = Math.max(o.y1, b.y + b.height);
+    });
+    body.setAttribute('data-h', cur);
+    return o.x1 > o.x0 ? o : null;
+  }
+  var MIN_NAME_PX = 6.5, MIN_PCT_PX = 7, HARD_MIN_PX = 5;  // on-screen sizes: a name shrinks to 86% at most and never below 6.5 px (else it is dropped), a percentage may shrink to 7 px, and to 5 px if it must; if it still does not fit the label is left out (the number is in the panel and on hover)
+  function lastScale(fontUnits, k, minPx) { var i = -1; SCALES.forEach(function (s, j) { if (s * fontUnits * k >= minPx) i = j; }); return i; }
+  function fit() {
+    var ctm = svg.getScreenCTM(); if (!ctm || !ctm.a) return;
+    var k = ctm.a, margin = 3 / k, last = SCALES.length - 1; STEP = Math.max(1, 2 / k);
+    var nmFs = parseFloat(getComputedStyle($('.nm', svg) || svg).fontSize) || 9, pcFs = parseFloat(getComputedStyle($('.pc', svg) || svg).fontSize) || 12.5;
+    var lastName = Math.min(2, lastScale(nmFs, k, MIN_NAME_PX)), lastPct = Math.max(0, lastScale(pcFs, k, MIN_PCT_PX)), lastHard = Math.max(0, lastScale(pcFs, k, HARD_MIN_PX));
+    $$('.lbls', svg).forEach(function (g) {
+      g.removeAttribute('transform'); g.removeAttribute('data-s'); g.classList.remove('noname'); g.classList.remove('nolabel');
+      var o = measure(g); if (!o) return;
+      var hasName = !!g.querySelector('.nm'), shown = hasName && getComputedStyle(g.querySelector('.nm')).display !== 'none', r = null;
+      if (shown && lastName >= 0) r = place(g, o, margin, lastName);                 // name and percentage, at a readable size, moved a little if need be
+      if (!r && shown) { g.classList.add('noname'); o = measure(g); }                // a small oblast: the percentage alone (the name is in the panel and on hover)
+      if (!r) r = place(g, o, margin, lastPct);
+      var small = false;
+      if (!r) { r = place(g, o, margin, lastHard); small = !!r; }
+      var miss = !r; if (miss) { g.classList.add('nolabel'); g.setAttribute('data-s', 'hidden'); return; }
+      g.setAttribute('transform', 'translate(' + r.cx.toFixed(1) + ' ' + r.cy.toFixed(1) + ') scale(' + r.s + ') translate(' + (-r.ox).toFixed(1) + ' ' + (-r.oy).toFixed(1) + ')');
+      g.setAttribute('data-s', r.s + (g.classList.contains('noname') ? 'n' : '') + (small ? 's' : ''));
+    });
+  }
+  var fitTimer = null;
+  function refit() { clearTimeout(fitTimer); fitTimer = setTimeout(fit, 120); }
+  window.addEventListener('resize', refit);
+  if (mobile.addEventListener) mobile.addEventListener('change', refit);
+
   /* ---------- start ---------- */
   setH(state.h);
+  fit();
 })();
 </script>
 </body></html>

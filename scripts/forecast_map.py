@@ -175,7 +175,7 @@ def render(payload, features=None):
             data_units.append(dict(iso=iso, name=shown, full=unit_full_name(name, lang), modelled=False, now=False, p={}, pc={}))
             lab = "" if iso in NO_LABEL else (f'<text class="nodata" x="{lx:.1f}" y="{ly - 3:.1f}">{esc(shown)}</text>'
                                               f'<text class="nodata" x="{lx:.1f}" y="{ly + 9:.1f}">{T("pg_nodata", lang)}</text>')
-            units_html.append(f'<g class="u nd" data-iso="{iso}" role="button" tabindex="0" aria-pressed="false" aria-label="{esc(shown)}"><path id="p-{iso}" d="{d}"/>{lab}</g>')
+            units_html.append(f'<g class="u nd" data-iso="{iso}" role="button" tabindex="0" aria-pressed="false" aria-label="{esc(shown)}"><path id="p-{iso}" d="{d}"/><g class="lbls">{lab}</g></g>')
             continue
         shown = short_name(ours, lang)
         data_units.append(dict(iso=iso, name=shown, full=full_name(ours, lang), modelled=True, now=bool(r["now"]),
@@ -195,7 +195,7 @@ def render(payload, features=None):
             bx_ = lx - max(20, widest * 2.7) - 11  # left of the wider of the name and the percentage line, so the badge never sits on a letter
             badge = f'<g class="badge"><circle cx="{bx_:.1f}" cy="{ly + 2:.1f}" r="8"/><text x="{bx_:.1f}" y="{ly + 6:.1f}">!</text></g>'
         units_html.append(f'<g class="u" data-oblast="{esc(ours)}" data-iso="{iso}" role="button" tabindex="0" aria-pressed="false" aria-label="{esc(shown)}: {pct(r["p"][1])}">'
-                          f'<path id="p-{iso}" class="{classes}" d="{d}"/>{"".join(labs)}{badge}</g>')
+                          f'<path id="p-{iso}" class="{classes}" d="{d}"/><g class="lbls">{"".join(labs)}{badge}</g></g>')
         if ours == "Kyiv City":
             kyiv_city = (r, proj(*pr["label"]))
 
@@ -221,31 +221,35 @@ def render(payload, features=None):
               f'<span class="chip"><b>\u25b2</b> {T("pg_lg_above", lang)}</span><span class="chip"><b>\u25bd</b> {T("pg_lg_below", lang)}</span>'
               f'<span class="chip"><b class="bd">!</b> {T("pg_lg_alert", lang)}</span>')
     seg = "".join(f'<button type="button" role="radio" data-h="{h}" aria-checked="{"true" if h == 1 else "false"}" tabindex="{0 if h == 1 else -1}">{T("ui_seg_item", lang, H=h)}</button>' for h in HORIZONS)
-    thr_txt = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=thr[h]) for h in HORIZONS))
+    thr_txt = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=100 * thr[h]) for h in HORIZONS))
     warn = tuple(T("pg_warn_prefixes", lang)) + ("!",)
     notes = list(payload["notes"])
     banner = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in notes if n.startswith(warn))
     banner = f'<div class="banner" role="status">{banner}</div>' if banner else ""
     model_pill = "<span>" + esc(T("ui_model", lang, model=payload["model"])) + f'<span class="fp"> \u00b7 {esc(payload["version"])}</span></span>'
     model_full = T("ui_model", lang, model=f"{payload['model']} \u00b7 {payload['version']}")
+    full_pill = T("ui_origin_pill", lang, hm=f"{kyiv:%H:%M}")
+    cut = full_pill.index(f"{kyiv:%H:%M}")
+    origin_pill = f'<span><span class="pl">{esc(full_pill[:cut])}</span>{esc(full_pill[cut:])}</span>'  # the label part is hidden on a phone, where the pill row is narrow
     how = "".join(f"<div><dt>{esc(h)}</dt><dd>{esc(t)}</dd></div>" for h, t in T("ui_how_items", lang))
-    about = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in [model_full, payload["model_text"]] + notes + [thr_txt])
+    origin_full = T("ui_origin", lang, hm=f"{kyiv:%H:%M}", t=origin)  # the pill has the Kyiv time only; the UTC hour is here
+    about = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in [origin_full, model_full, payload["model_text"]] + notes + [thr_txt])
     th = T("pg_th", lang)
     tr = []
     for name in sorted(rows, key=lambda n: sort_key(short_name(n, lang), lang)):
         r = rows[name]
-        cells = "".join(f'<td>{r["p"][h]:.3f} {T("pg_above" if r["p"][h] >= thr[h] else "pg_below", lang)}</td>' for h in HORIZONS)
+        cells = "".join(f'<td>{pct(r["p"][h])} {T("pg_above" if r["p"][h] >= thr[h] else "pg_below", lang)}</td>' for h in HORIZONS)
         tr.append(f"<tr><td>{esc(short_name(name, lang))}</td><td>{T('pg_alert_yes' if r['now'] else 'pg_alert_no', lang)}</td>{cells}</tr>")
     table = (f"<h2>{T('pg_h2', lang)}</h2><table><thead><tr>{''.join(f'<th>{esc(c)}</th>' for c in th)}</tr></thead><tbody>{''.join(tr)}</tbody></table>")
     history = payload.get("history")
     data = dict(lang=lang, h=1, mode=mode, made=f"{made.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}", origin=f"{origin.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}",
-                thr={str(h): thr[h] for h in HORIZONS}, edges=EDGES, units=data_units, history=history, thrText=thr_txt,
+                thr={str(h): thr[h] for h in HORIZONS}, thrPc={str(h): pct(thr[h]) for h in HORIZONS}, edges=EDGES, units=data_units, history=history, thrText=thr_txt,
                 S={k: S[k][lang] for k in JS_TEXTS})
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     page = TEMPLATE.read_text(encoding="utf-8")
     fills = {"{{TOKENS_CSS}}": tokens_css(), "{{MAP_CSS}}": map_css(), "{{LANG}}": lang, "{{H0}}": "1",
              "{{FRESH_CLASS}}": "", "{{FRESH_STATIC}}": esc(T("ui_replay_pill", lang) if mode == "replay" else T("ui_fresh_static", lang, made=made)),
-             "{{MODEL_TITLE}}": esc(payload["model_text"]), "{{MODEL_PILL}}": model_pill, "{{ORIGIN_PILL}}": esc(T("ui_origin", lang, hm=f"{kyiv:%H:%M}", t=origin)),
+             "{{MODEL_TITLE}}": esc(payload["model_text"]), "{{MODEL_PILL}}": model_pill, "{{ORIGIN_PILL}}": origin_pill,
              "{{BANNER}}": banner, "{{SEG}}": seg, "{{W}}": str(WIDTH), "{{HT}}": str(height), "{{UNITS}}": "\n".join(units_html), "{{CALLOUT}}": callout,
              "{{LEGEND}}": legend, "{{HOW}}": how, "{{ABOUT}}": about, "{{NOSCRIPT_TABLE}}": table}
     for k, v in fills.items():
