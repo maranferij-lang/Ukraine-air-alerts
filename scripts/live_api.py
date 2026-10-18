@@ -20,6 +20,7 @@ from scripts.check_no_peeking import known_at
 from src.baselines import KYIV
 from src.dataset import HORIZONS, load_inputs
 from src.features import FEATURES, build_features, load_neighbours
+from src.i18n import T, short_name
 from src.panel import official_episodes
 from src.targets import make_rows
 
@@ -151,10 +152,10 @@ def now_utc():
     return pd.Timestamp.now(tz="UTC")
 
 
-def calibration_note(model="v1"):
+def calibration_note(model="v1", lang="en"):
     """One line about calibration from the model's own evaluation table: v1: the forward test; v2: its held-out test window. None if the table is not there."""
-    path, label, name = ((ROOT / "results" / "forward_api" / "calibration.md", "the forward test (41 days, 2026-09-07 to 10-17, same models)", "LightGBM") if model == "v1"
-                         else (ROOT / "results" / "v2" / "calibration.md", "the v2 test window (20 days, 2026-09-28 to 10-17)", "v2 LightGBM"))
+    path, label, name = ((ROOT / "results" / "forward_api" / "calibration.md", T("cal_v1", lang), "LightGBM") if model == "v1"
+                         else (ROOT / "results" / "v2" / "calibration.md", T("cal_v2", lang), "v2 LightGBM"))
     try:
         text = path.read_text(encoding="utf-8")
         rows = {}
@@ -168,14 +169,21 @@ def calibration_note(model="v1"):
         return None
     low = all(rows[H][0] < rows[H][1] for H in HORIZONS)
     high = all(rows[H][0] > rows[H][1] for H in HORIZONS)
-    word = "a bit low" if low else "a bit high" if high else "about right on average"
-    return (f"Note: in {label} the model predicted {word} (mean predicted against observed): "
-            + ", ".join(f"{rows[H][0]:.3f} against {rows[H][1]:.3f} at {H} h" for H in HORIZONS)
-            + ". Nothing is recalibrated" + ("; read the probabilities as slightly low." if low else "."))
+    word = T("cal_low", lang) if low else T("cal_high", lang) if high else T("cal_mid", lang)
+    return T("cal_note", lang, label=label, word=word, items=", ".join(T("cal_item", lang, p=rows[H][0], o=rows[H][1], H=H) for H in HORIZONS),
+             tail=T("cal_tail_low", lang) if low else T("cal_tail", lang))
 
 
-def forward_test_note():
-    return calibration_note("v1")
+def ago(now, ts, lang="en"):
+    """How long before `now` an API timestamp is: 'just now' for anything under a minute, and also for a timestamp ahead of our clock (the API's clock may run ahead of ours)."""
+    d = (now - ts).total_seconds()
+    if d < 60:
+        return T("ago_now", lang)
+    return T("ago_min", lang, n=d / 60) if d < 3 * 3600 else T("ago_h", lang, n=d / 3600)
+
+
+def forward_test_note(lang="en"):
+    return calibration_note("v1", lang)
 
 
 def refuse(lines):
@@ -183,7 +191,7 @@ def refuse(lines):
     return 1
 
 
-def live_forecast(oblast=None, resolve=None, model=None):
+def live_forecast(oblast=None, resolve=None, model=None, lang="en"):
     """Forecast for the last completed hour from the API. Returns the exit code (0 = forecast printed, 1 = refused). `oblast`: show one oblast only
     (resolve turns the typed name into one of ours)."""
     import textwrap
@@ -242,7 +250,7 @@ def live_forecast(oblast=None, resolve=None, model=None):
     rows_t, feats = features_at(api_rows, raions, oblasts, t)
     prob = probabilities(feats, boosters)
     thr = {H: frozen["thresholds"][str(H)]["lgbm"] for H in HORIZONS}
-    table = pd.DataFrame({"oblast": rows_t["oblast"].str.replace(" oblast", "", regex=False), "now": feats[1]["now"].to_numpy() > 0})
+    table = pd.DataFrame({"oblast": rows_t["oblast"].str.replace(" oblast", "", regex=False), "now": feats[1]["now"].to_numpy() > 0, "full": rows_t["oblast"]})
     for H in HORIZONS:
         table[f"p{H}"] = prob[H]
         table[f"o{H}"] = prob[H] >= thr[H]
@@ -260,38 +268,36 @@ def live_forecast(oblast=None, resolve=None, model=None):
     ends = st["end"][(st["end"].dt.year > 2000) & (st["end"] <= now)]
     newest_end = ends.max() if len(ends) else None
     upd = [pd.Timestamp(a["lastUpdate"]) for a in (active or []) if isinstance(a, dict) and a.get("lastUpdate")]
-    mins = lambda ts: f"{(now - ts).total_seconds() / 60:.0f} min before now" if (now - ts) < pd.Timedelta(hours=3) else f"{(now - ts).total_seconds() / 3600:.1f} h before now"
-    fresh = (f"Freshness: now is {now:%Y-%m-%d %H:%M} UTC. The newest alert start in the API is {newest_start:%Y-%m-%d %H:%M} UTC ({mins(newest_start)})"
-             + (f", the newest end {newest_end:%Y-%m-%d %H:%M} UTC" if newest_end is not None else "")
-             + (f"; its active-alerts list was last updated {max(upd):%Y-%m-%d %H:%M} UTC ({mins(max(upd))})" if upd else "")
-             + ". A quiet spell and an API that is behind look the same from here.")
+    fresh = (T("fresh_head", lang, now=now, start=newest_start, ago=ago(now, newest_start, lang))
+             + (T("fresh_end", lang, end=newest_end) if newest_end is not None else "")
+             + (T("fresh_upd", lang, upd=max(upd), ago=ago(now, max(upd), lang)) if upd else "")
+             + T("fresh_tail", lang))
     local = t.tz_convert(KYIV)
-    model_text = ("Model: LightGBM v1, trained on official data to 2026-08-07, not retrained (--model v2 for the newer one)." if model == "v1" else
-                  "Model: LightGBM v2, trained on the combined official + API data (to 2026-10-17 for this forecast), the same features and settings as v1 (--model v1 for the older one).")
-    print(textwrap.fill(f"Live forecast from the Ukraine Alarm API for the hour starting {t:%Y-%m-%d %H:%M} UTC ({local:%H:%M} Kyiv time), the last completed hour: "
-                        "the chance that a NEW alert starts within the next 1, 3 and 6 hours. Only what the API reported by that hour is used; alerts that started later are not. "
-                        + model_text, 100))
+    model_text = T("model_v1" if model == "v1" else "model_v2", lang)
+    print(textwrap.fill(T("live_head", lang, t=t, hm=f"{local:%H:%M}", model_text=model_text), 100))
     print()
     print(textwrap.fill(fresh, 100))
+    left_out = ""
     if dropped["district not in our raion list"]:
-        print(textwrap.fill("Left out: alerts in districts that are not in our raion list: " + ", ".join(sorted(dropped["district not in our raion list"])) + ".", 100))
-    note = calibration_note(model)
+        left_out = T("left_out", lang, names=", ".join(sorted(dropped["district not in our raion list"])))
+        print(textwrap.fill(left_out, 100))
+    note = calibration_note(model, lang)
     if note:
         print()
         print(textwrap.fill(note, 100))
     print()
-    print("'above' = at or above the frozen threshold (max F1 on the last train week): " + ", ".join(f"{H} h {thr[H]:.3f}" for H in HORIZONS) + ". Sorted by the 1 h probability.")
+    print(T("above_help", lang, thr=", ".join(T("thr_item", lang, H=H, v=thr[H]) for H in HORIZONS)))
+    yn = lambda v: T("yes", lang) if v else T("no", lang)
     rows_out = []
     for _, r in table.iterrows():
-        row = [r["oblast"], "yes" if r["now"] else "no"]
+        row = [short_name(r["full"], lang), yn(r["now"])]
         for H in HORIZONS:
-            row += [f"{r[f'p{H}']:.3f}", "yes" if r[f"o{H}"] else "no"]
+            row += [f"{r[f'p{H}']:.3f}", yn(r[f"o{H}"])]
         rows_out.append(row)
-    print(pd.DataFrame(rows_out, columns=["oblast", "alert now", "1 h", "above", "3 h", "above ", "6 h", "above  "]).to_string(index=False))
-    print(f"\nLogged {n_logged} forecasts (24 oblasts x 3 horizons) to {PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG}.")
+    print(pd.DataFrame(rows_out, columns=T("live_cols", lang)).to_string(index=False))
+    print(T("logged", lang, n=n_logged, path=PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG))
     from scripts import forecast_map
-    notes = [fresh] + (["Left out: alerts in districts that are not in our raion list: " + ", ".join(sorted(dropped["district not in our raion list"])) + "."]
-                       if dropped["district not in our raion list"] else []) + ([note] if note else [])
-    forecast_map.write_or_warn(dict(origin=t, made=now, model=model, version=model_version(model), model_text="Live forecast from the Ukraine Alarm API. " + model_text,
-                                    thresholds=thr, notes=notes, rows=map_rows))
+    notes = [fresh] + ([left_out] if left_out else []) + ([note] if note else [])
+    forecast_map.write_or_warn(dict(origin=t, made=now, model=model, version=model_version(model), model_text=T("map_live", lang) + model_text,
+                                    thresholds=thr, notes=notes, rows=map_rows, lang=lang))
     return 0
