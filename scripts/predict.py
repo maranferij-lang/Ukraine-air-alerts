@@ -210,16 +210,19 @@ def main():
                                    '"2026-09-05 17:00+03:00"; rounded down to the hour')
     when.add_argument("--now", action="store_true", help="live forecast for the last completed hour from the Ukraine Alarm API (needs UA_ALARM_TOKEN in "
                                                           "the environment); every oblast unless --oblast is given")
+    ap.add_argument("--model", choices=["v1", "v2"], help="with --now: which model to use (default: the one the v2 decision rule chose, results/v2/decision.json)")
     who = ap.add_mutually_exclusive_group()
     who.add_argument("--oblast", help='oblast name or a unique start of it, e.g. "Kyivska", "Kyiv City", "Lviv"')
     who.add_argument("--all", action="store_true", help="every oblast, one row each")
     args = ap.parse_args()
     if args.at and not (args.oblast or args.all):
         ap.error("--at needs --oblast or --all")
+    if args.model and not args.now:
+        ap.error("--model only applies to --now (--at uses the round-13 model on the official data)")
     if args.now:
         load_models()  # the frozen models must be there (scripts/evaluate.py writes them)
         from scripts.live_api import live_forecast
-        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names))))
+        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names)), args.model))
 
     info, boosters, freq = load_models()
     t, round_note = parse_origin(args.at)

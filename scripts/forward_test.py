@@ -50,11 +50,14 @@ BASELINES = ["persistence", "yesterday", "frequency"]
 N_BOOT = 1000
 
 
-def load_frozen():
-    info = json.loads((MODELS / "info.json").read_text())
-    frozen = json.loads((MODELS / "frozen.json").read_text())
-    boosters = {H: lgb.Booster(model_file=str(MODELS / f"lgbm_b_start_h{H}.txt")) for H in HORIZONS}
-    freq = {H: pd.read_csv(MODELS / f"frequency_b_start_h{H}.csv", float_precision="round_trip").set_index(["oblast", "hour", "weekday"])["rate"] for H in HORIZONS}
+def load_frozen(models_dir=None):
+    """The frozen artifacts of one model: info.json, frozen.json (thresholds, logistic weights), the three boosters and, if the folder has them, the train-frequency tables."""
+    d = Path(models_dir or MODELS)
+    info = json.loads((d / "info.json").read_text())
+    frozen = json.loads((d / "frozen.json").read_text())
+    boosters = {H: lgb.Booster(model_file=str(d / f"lgbm_b_start_h{H}.txt")) for H in HORIZONS}
+    freq = {H: pd.read_csv(d / f"frequency_b_start_h{H}.csv", float_precision="round_trip").set_index(["oblast", "hour", "weekday"])["rate"]
+            for H in HORIZONS if (d / f"frequency_b_start_h{H}.csv").exists()}
     assert info["features"] == FEATURES and info["horizons"] == HORIZONS
     return info, frozen, boosters, freq
 

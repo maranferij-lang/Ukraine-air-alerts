@@ -24,6 +24,8 @@ from src.panel import official_episodes
 from src.targets import make_rows
 
 ARCHIVE = ROOT / "data" / "api_archive" / "date_history"
+MODEL_DIRS = {"v1": ROOT / "models", "v2": ROOT / "models" / "v2"}
+DECISION = ROOT / "results" / "v2" / "decision.json"
 PRED_LOG = ROOT / "data" / "predictions" / "log.csv"
 PRED_COLUMNS = ["origin_utc", "oblast", "h", "probability", "above_threshold", "threshold", "model_version", "run_time_utc"]
 GRID = pd.Timedelta(days=29)         # freq4w looks 1-4 weeks back
@@ -80,13 +82,22 @@ def stale_open(api_rows, active_ids, refetch_from):
     return running[old & ((running["start"] < newest) | ~running["regionId"].isin(set(active_ids)))]
 
 
-def model_version():
-    """A short fingerprint of the frozen models a forecast came from: SHA-256 of the three LightGBM files and frozen.json (thresholds, logistic weights)."""
+def default_model():
+    """The model `predict.py --now` uses unless --model says otherwise: what the v2 decision rule chose (results/v2/decision.json); v1 if there is no decision."""
+    try:
+        return json.loads(DECISION.read_text())["use"]
+    except Exception:
+        return "v1"
+
+
+def model_version(model="v1"):
+    """A short fingerprint of the frozen models a forecast came from: SHA-256 of the three LightGBM files and frozen.json of that model."""
     import hashlib
+    d = MODEL_DIRS[model]
     h = hashlib.sha256()
     for name in [f"lgbm_b_start_h{H}.txt" for H in HORIZONS] + ["frozen.json"]:
-        h.update((ROOT / "models" / name).read_bytes())
-    return "frozen-r13-" + h.hexdigest()[:12]
+        h.update((d / name).read_bytes())
+    return ("frozen-r13-" if model == "v1" else "frozen-v2-") + h.hexdigest()[:12]
 
 
 def append_prediction_log(origin, oblasts, prob, thr, version, run_time, path=None):
@@ -140,23 +151,31 @@ def now_utc():
     return pd.Timestamp.now(tz="UTC")
 
 
-def forward_test_note():
-    """One line from the forward test's calibration table: the model tended to predict low. None if the table is not there."""
-    path = ROOT / "results" / "forward_api" / "calibration.md"
+def calibration_note(model="v1"):
+    """One line about calibration from the model's own evaluation table: v1: the forward test; v2: its held-out test window. None if the table is not there."""
+    path, label, name = ((ROOT / "results" / "forward_api" / "calibration.md", "the forward test (41 days, 2026-09-07 to 10-17, same models)", "LightGBM") if model == "v1"
+                         else (ROOT / "results" / "v2" / "calibration.md", "the v2 test window (20 days, 2026-09-28 to 10-17)", "v2 LightGBM"))
     try:
         text = path.read_text(encoding="utf-8")
         rows = {}
-        section = text.split("## Calibration in the large")[1].split("\n## ")[0]  # the first table only
+        section = text.split("## Calibration in the large")[1].split("\n## ")[0] if model == "v1" else text.split("\n## ")[0]  # the first table only
         for line in section.split("\n"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) >= 4 and cells[1] == "LightGBM" and cells[0] in ("1", "3", "6"):
-                rows[int(cells[0])] = (cells[2], cells[3])
+            if len(cells) >= 4 and cells[1] == name and cells[0] in ("1", "3", "6"):
+                rows[int(cells[0])] = (float(cells[2]), float(cells[3]))
         assert len(rows) == 3
     except Exception:
         return None
-    return ("Note: in the forward test (41 days, 2026-09-07 to 10-17, same models) the model predicted a bit low: mean predicted against observed "
-            + ", ".join(f"{float(rows[H][0]):.3f} against {float(rows[H][1]):.3f} at {H} h" for H in HORIZONS)
-            + ". Nothing is recalibrated; read the probabilities as slightly low.")
+    low = all(rows[H][0] < rows[H][1] for H in HORIZONS)
+    high = all(rows[H][0] > rows[H][1] for H in HORIZONS)
+    word = "a bit low" if low else "a bit high" if high else "about right on average"
+    return (f"Note: in {label} the model predicted {word} (mean predicted against observed): "
+            + ", ".join(f"{rows[H][0]:.3f} against {rows[H][1]:.3f} at {H} h" for H in HORIZONS)
+            + ". Nothing is recalibrated" + ("; read the probabilities as slightly low." if low else "."))
+
+
+def forward_test_note():
+    return calibration_note("v1")
 
 
 def refuse(lines):
@@ -164,7 +183,7 @@ def refuse(lines):
     return 1
 
 
-def live_forecast(oblast=None, resolve=None):
+def live_forecast(oblast=None, resolve=None, model=None):
     """Forecast for the last completed hour from the API. Returns the exit code (0 = forecast printed, 1 = refused). `oblast`: show one oblast only
     (resolve turns the typed name into one of ours)."""
     import textwrap
@@ -173,7 +192,11 @@ def live_forecast(oblast=None, resolve=None):
     from scripts.forward_test import load_frozen
     from src.ukrainealarm import Client
 
-    info, frozen, boosters, freq = load_frozen()
+    model = model or default_model()
+    if not (MODEL_DIRS[model] / "info.json").exists():
+        return refuse([f"Cannot forecast now: the {model} model files are missing ({MODEL_DIRS[model].relative_to(ROOT)}/).",
+                       "Make them with: python scripts/evaluate.py" if model == "v1" else "Make them with: python scripts/build_combined.py, then python scripts/train_v2.py"])
+    info, frozen, boosters, freq = load_frozen(MODEL_DIRS[model])
     raions, oblasts = inputs()
     want = resolve(oblast, oblasts).replace(" oblast", "") if oblast else None  # a bad name stops here, before any request
     now = now_utc()
@@ -223,7 +246,7 @@ def live_forecast(oblast=None, resolve=None):
     for H in HORIZONS:
         table[f"p{H}"] = prob[H]
         table[f"o{H}"] = prob[H] >= thr[H]
-    n_logged = append_prediction_log(t, list(rows_t["oblast"]), prob, thr, model_version(), now)  # the whole forecast, whatever is shown below
+    n_logged = append_prediction_log(t, list(rows_t["oblast"]), prob, thr, model_version(model), now)  # the whole forecast, whatever is shown below
     table = table.sort_values("p1", ascending=False, kind="stable").reset_index(drop=True)
     if want:
         table = table[table["oblast"] == want].reset_index(drop=True)
@@ -243,12 +266,14 @@ def live_forecast(oblast=None, resolve=None):
     local = t.tz_convert(KYIV)
     print(textwrap.fill(f"Live forecast from the Ukraine Alarm API for the hour starting {t:%Y-%m-%d %H:%M} UTC ({local:%H:%M} Kyiv time), the last completed hour: "
                         "the chance that a NEW alert starts within the next 1, 3 and 6 hours. Only what the API reported by that hour is used; alerts that started later are not. "
-                        "Models: LightGBM trained on official data to 2026-08-07, not retrained.", 100))
+                        + ("Model: LightGBM v1, trained on official data to 2026-08-07, not retrained (--model v2 for the newer one)." if model == "v1" else
+                           "Model: LightGBM v2, trained on the combined official + API data (to 2026-10-17 for this forecast), the same features and settings as v1 (--model v1 for the older one).")
+                        , 100))
     print()
     print(textwrap.fill(fresh, 100))
     if dropped["district not in our raion list"]:
         print(textwrap.fill("Left out: alerts in districts that are not in our raion list: " + ", ".join(sorted(dropped["district not in our raion list"])) + ".", 100))
-    note = forward_test_note()
+    note = calibration_note(model)
     if note:
         print()
         print(textwrap.fill(note, 100))

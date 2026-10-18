@@ -2242,3 +2242,34 @@ nothing. Test offline, log, commit to live, Mac commands if any, stop. Nothing w
 7. **What will not be done after seeing numbers:** no change of split, features, hyperparameters, rule, test window or predictor list; no second run with other settings; if a bug is found afterwards it is reported with the numbers before and after, and the design above stays the reference. Both outcomes of the rule are acceptable results.
 
 **Not decided here, to be reported:** nothing about `main` (still the submitted state, round 13); the README/DETAILS sections follow the results. The training script (`scripts/train_v2.py`) is written after this commit.
+
+## 2026-10-19 — Round 16 (branch `live`): v2 RESULTS, decision, docs
+**The design above was committed first (4e0c628); nothing in it was changed after a number was seen.** Script `scripts/train_v2.py`, results in `results/v2/` (`test_table`, `bootstrap`, `calibration`, `decision.json`), production model in `models/v2/` (git-ignored). No mishaps in this round's runs.
+
+### Result (test 2026-09-28 to 10-17, 20 days, the same rows for every predictor; within-oblast AUC / Brier)
+| H | v2 | frozen v1 | train frequency | same hour yesterday | same as now |
+|---|---|---|---|---|---|
+| 1 | 0.692 / 0.127 | 0.686 / 0.129 | 0.513 / 0.165 | 0.517 / 0.269 | 0.400 / 0.421 |
+| 3 | 0.663 / 0.166 | 0.660 / 0.170 | 0.516 / 0.278 | 0.541 / 0.316 | 0.459 / 0.438 |
+| 6 | 0.664 / 0.131 | 0.654 / 0.135 | 0.507 / 0.271 | 0.543 / 0.238 | 0.478 / 0.443 |
+(Copied from `results/v2/test_table.md`; the logistic model, the rolling 4-week frequency and the thresholded precision/recall/F1 are in the same file.)
+
+### Decision rule, applied as written (point values, plain v2 against frozen v1)
+AUC v2 not worse than v1 at H = 1, 3, 6: 0.6916 vs 0.6856, 0.6633 vs 0.6598, 0.6645 vs 0.6536: yes at all three. Brier better at H=1: 0.1269 vs 0.1292: yes. **So `predict.py --now` defaults to v2**; `--model v1` keeps the old model. The production model was refit on every origin whose window closes by the cut with the same tree counts (194 / 181 / 149) and the validation-fit thresholds (0.2519 / 0.4270 / 0.4268), saved to `models/v2/`.
+
+### Honest reading
+- The AUC edge over v1 is small and not established: the day-bootstrap 95% intervals of the difference (v2 minus v1) are +0.006 [-0.001, 0.014] at H=1, +0.004 [-0.003, 0.010] at H=3, +0.011 [0.000, 0.020] at H=6, so zero is inside at H=1 and H=3 and on the edge at H=6. The rule selected v2 on point values; that is weaker than "v2 ranks better".
+- The Brier edge is consistent across resamples and is mostly level: both models predict lower than what happened in this busier period (H=1 mean predicted 0.1762 v2, 0.1611 v1, against 0.1957 observed), v2 less so.
+- Platt scaling fitted on the validation week (slopes 1.11 / 1.09 / 1.14, small intercepts) changes Brier by at most 0.0003 and ranking not at all; no benefit, so it stays a secondary line.
+- Both LightGBM models are far ahead of the three baselines and of the logistic model, as in the earlier tests.
+- **v1 was already scored on these days in the forward test**; this is one 20-day period from one source. v2's training data include 09-07 to 09-27, the first part of v1's forward-test period, so v2 is not independent of what was learned there. The model `--now` uses is additionally refit on the 20 test days, which has no held-out score.
+
+### Checks
+- `train_v2.py` run twice: `results/v2/` and all model files (`models/v2/*.txt`, `info.json`, `frozen.json`) byte-identical.
+- `predict.py --now` plumbing tested offline against the fake local API (real saved days as of a fixed moment): default picks v2 from `decision.json`, `--model v1` and `--model v2` each give 72 probabilities equal to the respective model on the forward-test features; the prediction log carries the model version (`frozen-v2-...` vs `frozen-r13-...`).
+- `check_live_replay.py`: passed; `forward_test.py --selftest`: all cells equal; no existing file in `results/` changed (git status shows only new `results/v2/`). `evaluate.py` was not rerun: nothing it uses (`src/`, its own script) changed in this round.
+- README: v2 subsection (numbers generated from the `results/v2` tables, not retyped) and the `--now` bullet; DETAILS: new v2 section, contents entry, run order, layout. Links/anchors: 0 problems; no `#` or backticks inside fenced blocks.
+
+### Mac commands (nothing here touches the API except the last)
+git pull; source .venv/bin/activate; python scripts/build_combined.py then git status (unchanged `data/combined/MANIFEST.md` = the same SHA-256 721cf775…f8c14); python scripts/train_v2.py (about 3 minutes; `git status` should show no change in `results/v2/`); python scripts/predict.py --now (v2 by default, token read from `UA_ALARM_TOKEN`); python scripts/predict.py --now --model v1 for the old model.
+`main` untouched.

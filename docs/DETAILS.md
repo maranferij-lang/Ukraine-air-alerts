@@ -10,6 +10,7 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [Forward test on the Ukraine Alarm API](#forward-test-on-the-ukraine-alarm-api): the frozen models scored on 41 days of live API data, separate from the old test.
 - [The combined dataset](#the-combined-dataset-official-data--the-api-archive): official data up to 2026-08-28, the API archive after it, the Aug 19-20 patch; every splice point and its checks.
 - [The live forecast log and its scorer](#the-live-forecast-log-and-its-scorer)
+- [v2: LightGBM trained on the combined dataset](#v2-lightgbm-trained-on-the-combined-dataset): the round-16 model, the held-out comparison with frozen v1, the decision rule.
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -537,6 +538,133 @@ Checked by `scripts/check_combined.py` -> `results/combined_splice_check.md`. Th
   and warns if the scored forecasts come from more than one model version.
 - **Tested offline:** a synthetic log with the frozen model's probabilities for every hour of the forward test (2026-09-07 to 10-17) is scored to exactly the forward test's table (60 cells: AUC, Brier, precision, recall, F1 for LightGBM and the three baselines); the edge cases (an origin whose horizon has not passed, one beyond the archive, a duplicate run, a mixed header, an empty log) behave as described.
 
+## v2: LightGBM trained on the combined dataset
+
+Round 16. **The design, with the decision rule, is in `PROCESS_LOG.md` ("Round 16 ... DESIGN, fixed before any test number is seen"), committed (4e0c628) before the training script existed and before any v2 number was computed.** Script: `scripts/train_v2.py`; results: `results/v2/`; production model: `models/v2/` (not committed; `python scripts/build_combined.py` then `python scripts/train_v2.py` rebuilds it, deterministically: a second run gave byte-identical results and model files).
+
+- **Data:** the combined dataset (official to 2026-08-28, API from 08-29, the Aug 19-20 patch), cut at 2026-10-18 00:00 UTC; no outage mask (features with `outages=[]`, rows split with `outages=()`).
+- **Split, per H, as v1's `split()` with test_start = 2026-09-28:** train = windows closing by 09-28 (950,400 / 950,352 / 950,280 rows at H = 1 / 3 / 6); validation fit = windows closing by 09-21; validation week 09-21 to 09-27 for early stopping and the F1 threshold; final fit on all train rows with the early-stopped tree count (194 / 181 / 149 trees); test = 09-28 to 10-17, 20 days (11,520 / 11,472 / 11,400 rows). Thresholds come from the validation fit (v1's known approximation).
+- **Model:** v1's features and hyperparameters, nothing tuned. **Predictors on the same test rows:** v2; v2 with Platt scaling fitted on the validation week only (secondary); frozen v1; a logistic regression refit on the v2 rows; same as now; same hour yesterday; train frequency (fitted on the v2 train rows); rolling 4-week frequency.
+- **v1 was already scored on these days in the forward test.** It is 20 days from one source; the intervals are wide.
+
+### Results (within-oblast AUC, Brier, precision, recall, F1 at the validation-week threshold)
+
+| H | predictor | n | base_rate | auc_within_oblast | oblasts_with_both_outcomes | brier | threshold | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | v2 LightGBM | 11520 | 0.196 | 0.692 | 23 | 0.127 | 0.252 | 0.459 | 0.608 | 0.523 |
+| 1 | v2 + Platt (secondary) | 11520 | 0.196 | 0.692 | 23 | 0.127 | 0.263 | 0.459 | 0.608 | 0.523 |
+| 1 | frozen v1 LightGBM | 11520 | 0.196 | 0.686 | 23 | 0.129 | 0.187 | 0.427 | 0.674 | 0.522 |
+| 1 | logistic (refit on the v2 rows) | 11520 | 0.196 | 0.531 | 23 | 0.147 | 0.174 | 0.321 | 0.669 | 0.434 |
+| 1 | same as now | 11520 | 0.196 | 0.400 | 23 | 0.421 | raw 0/1 | 0.133 | 0.208 | 0.162 |
+| 1 | same hour yesterday | 11520 | 0.196 | 0.517 | 23 | 0.269 | raw 0/1 | 0.309 | 0.304 | 0.307 |
+| 1 | train frequency | 11520 | 0.196 | 0.513 | 23 | 0.165 | 0.051 | 0.252 | 0.742 | 0.376 |
+| 1 | rolling 4-week frequency | 11520 | 0.196 | 0.509 | 23 | 0.172 | 0.250 | 0.275 | 0.635 | 0.383 |
+| 3 | v2 LightGBM | 11472 | 0.443 | 0.663 | 23 | 0.166 | 0.427 | 0.712 | 0.753 | 0.732 |
+| 3 | v2 + Platt (secondary) | 11472 | 0.443 | 0.663 | 23 | 0.165 | 0.435 | 0.712 | 0.753 | 0.732 |
+| 3 | frozen v1 LightGBM | 11472 | 0.443 | 0.660 | 23 | 0.170 | 0.243 | 0.637 | 0.897 | 0.745 |
+| 3 | logistic (refit on the v2 rows) | 11472 | 0.443 | 0.547 | 23 | 0.187 | 0.355 | 0.676 | 0.776 | 0.723 |
+| 3 | same as now | 11472 | 0.443 | 0.459 | 23 | 0.438 | raw 0/1 | 0.508 | 0.352 | 0.416 |
+| 3 | same hour yesterday | 11472 | 0.443 | 0.541 | 23 | 0.316 | raw 0/1 | 0.646 | 0.635 | 0.640 |
+| 3 | train frequency | 11472 | 0.443 | 0.516 | 23 | 0.278 | 0.119 | 0.553 | 0.787 | 0.649 |
+| 3 | rolling 4-week frequency | 11472 | 0.443 | 0.521 | 23 | 0.225 | 0.250 | 0.564 | 0.883 | 0.689 |
+| 6 | v2 LightGBM | 11400 | 0.595 | 0.664 | 23 | 0.131 | 0.427 | 0.830 | 0.879 | 0.854 |
+| 6 | v2 + Platt (secondary) | 11400 | 0.595 | 0.664 | 23 | 0.131 | 0.407 | 0.830 | 0.879 | 0.854 |
+| 6 | frozen v1 LightGBM | 11400 | 0.595 | 0.654 | 23 | 0.135 | 0.314 | 0.775 | 0.931 | 0.846 |
+| 6 | logistic (refit on the v2 rows) | 11400 | 0.595 | 0.569 | 23 | 0.144 | 0.371 | 0.797 | 0.877 | 0.835 |
+| 6 | same as now | 11400 | 0.595 | 0.478 | 23 | 0.443 | raw 0/1 | 0.748 | 0.385 | 0.509 |
+| 6 | same hour yesterday | 11400 | 0.595 | 0.543 | 23 | 0.238 | raw 0/1 | 0.804 | 0.793 | 0.798 |
+| 6 | train frequency | 11400 | 0.595 | 0.507 | 23 | 0.271 | 0.171 | 0.723 | 0.843 | 0.779 |
+| 6 | rolling 4-week frequency | 11400 | 0.595 | 0.502 | 23 | 0.187 | 0.500 | 0.784 | 0.838 | 0.810 |
+
+### Intervals (day-block bootstrap: whole test days resampled, 1,000 resamples, seed 0, 95% percentile intervals)
+Each predictor:
+
+| H | predictor | auc | auc_lo | auc_hi | brier | brier_lo | brier_hi |
+|---|---|---|---|---|---|---|---|
+| 1 | v2 LightGBM | 0.692 | 0.650 | 0.722 | 0.127 | 0.117 | 0.136 |
+| 1 | v2 + Platt (secondary) | 0.692 | 0.650 | 0.722 | 0.127 | 0.117 | 0.136 |
+| 1 | frozen v1 LightGBM | 0.686 | 0.644 | 0.714 | 0.129 | 0.118 | 0.139 |
+| 1 | logistic (refit on the v2 rows) | 0.531 | 0.501 | 0.563 | 0.147 | 0.133 | 0.160 |
+| 1 | same as now | 0.400 | 0.380 | 0.417 | 0.421 | 0.382 | 0.458 |
+| 1 | same hour yesterday | 0.517 | 0.506 | 0.528 | 0.269 | 0.247 | 0.289 |
+| 1 | train frequency | 0.513 | 0.492 | 0.528 | 0.165 | 0.148 | 0.181 |
+| 1 | rolling 4-week frequency | 0.509 | 0.499 | 0.520 | 0.172 | 0.158 | 0.185 |
+| 3 | v2 LightGBM | 0.663 | 0.622 | 0.693 | 0.166 | 0.155 | 0.176 |
+| 3 | v2 + Platt (secondary) | 0.663 | 0.622 | 0.693 | 0.165 | 0.155 | 0.176 |
+| 3 | frozen v1 LightGBM | 0.660 | 0.620 | 0.689 | 0.170 | 0.159 | 0.180 |
+| 3 | logistic (refit on the v2 rows) | 0.547 | 0.510 | 0.575 | 0.187 | 0.172 | 0.202 |
+| 3 | same as now | 0.459 | 0.438 | 0.477 | 0.438 | 0.408 | 0.465 |
+| 3 | same hour yesterday | 0.541 | 0.525 | 0.553 | 0.316 | 0.297 | 0.334 |
+| 3 | train frequency | 0.516 | 0.485 | 0.546 | 0.278 | 0.250 | 0.304 |
+| 3 | rolling 4-week frequency | 0.521 | 0.507 | 0.538 | 0.225 | 0.211 | 0.239 |
+| 6 | v2 LightGBM | 0.664 | 0.616 | 0.696 | 0.131 | 0.119 | 0.143 |
+| 6 | v2 + Platt (secondary) | 0.664 | 0.616 | 0.696 | 0.131 | 0.118 | 0.144 |
+| 6 | frozen v1 LightGBM | 0.654 | 0.606 | 0.684 | 0.135 | 0.124 | 0.146 |
+| 6 | logistic (refit on the v2 rows) | 0.569 | 0.522 | 0.600 | 0.144 | 0.131 | 0.156 |
+| 6 | same as now | 0.478 | 0.458 | 0.496 | 0.443 | 0.420 | 0.466 |
+| 6 | same hour yesterday | 0.543 | 0.523 | 0.559 | 0.238 | 0.213 | 0.264 |
+| 6 | train frequency | 0.507 | 0.471 | 0.542 | 0.271 | 0.247 | 0.294 |
+| 6 | rolling 4-week frequency | 0.502 | 0.475 | 0.534 | 0.187 | 0.173 | 0.200 |
+
+v2 minus each other predictor (AUC: positive = v2 ahead; Brier: negative = v2 ahead; `share_*_ahead` = share of resamples in which v2 is ahead; the Platt variant has the same within-oblast AUC by construction):
+
+| H | predictor | d_auc | d_auc_lo | d_auc_hi | share_auc_ahead | d_brier | d_brier_lo | d_brier_hi | share_brier_ahead |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | v2 + Platt (secondary) | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | -0.001 | 0.001 | 0.494 |
+| 1 | frozen v1 LightGBM | 0.006 | -0.001 | 0.014 | 0.946 | -0.002 | -0.003 | -0.001 | 1.000 |
+| 1 | logistic (refit on the v2 rows) | 0.160 | 0.121 | 0.181 | 1.000 | -0.020 | -0.024 | -0.015 | 1.000 |
+| 1 | same as now | 0.291 | 0.242 | 0.327 | 1.000 | -0.294 | -0.325 | -0.263 | 1.000 |
+| 1 | same hour yesterday | 0.175 | 0.130 | 0.205 | 1.000 | -0.142 | -0.156 | -0.129 | 1.000 |
+| 1 | train frequency | 0.179 | 0.135 | 0.212 | 1.000 | -0.038 | -0.046 | -0.031 | 1.000 |
+| 1 | rolling 4-week frequency | 0.183 | 0.138 | 0.214 | 1.000 | -0.045 | -0.051 | -0.040 | 1.000 |
+| 3 | v2 + Platt (secondary) | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | -0.000 | 0.001 | 0.224 |
+| 3 | frozen v1 LightGBM | 0.004 | -0.003 | 0.010 | 0.879 | -0.004 | -0.006 | -0.002 | 1.000 |
+| 3 | logistic (refit on the v2 rows) | 0.117 | 0.082 | 0.146 | 1.000 | -0.021 | -0.028 | -0.015 | 1.000 |
+| 3 | same as now | 0.204 | 0.158 | 0.243 | 1.000 | -0.272 | -0.297 | -0.247 | 1.000 |
+| 3 | same hour yesterday | 0.123 | 0.083 | 0.158 | 1.000 | -0.150 | -0.170 | -0.132 | 1.000 |
+| 3 | train frequency | 0.148 | 0.102 | 0.187 | 1.000 | -0.112 | -0.136 | -0.090 | 1.000 |
+| 3 | rolling 4-week frequency | 0.142 | 0.098 | 0.173 | 1.000 | -0.059 | -0.068 | -0.049 | 1.000 |
+| 6 | v2 + Platt (secondary) | 0.000 | 0.000 | 0.000 | 0.000 | -0.000 | -0.001 | 0.001 | 0.635 |
+| 6 | frozen v1 LightGBM | 0.011 | 0.000 | 0.020 | 0.975 | -0.004 | -0.006 | -0.002 | 1.000 |
+| 6 | logistic (refit on the v2 rows) | 0.096 | 0.055 | 0.143 | 1.000 | -0.013 | -0.017 | -0.008 | 1.000 |
+| 6 | same as now | 0.186 | 0.140 | 0.221 | 1.000 | -0.312 | -0.341 | -0.283 | 1.000 |
+| 6 | same hour yesterday | 0.122 | 0.080 | 0.151 | 1.000 | -0.107 | -0.129 | -0.087 | 1.000 |
+| 6 | train frequency | 0.157 | 0.096 | 0.201 | 1.000 | -0.140 | -0.168 | -0.111 | 1.000 |
+| 6 | rolling 4-week frequency | 0.163 | 0.111 | 0.198 | 1.000 | -0.055 | -0.068 | -0.044 | 1.000 |
+
+### Calibration in the large, and the Platt variant (secondary)
+Mean predicted against observed; Brier = bias^2 + Var(p - y). The full decomposition, the Platt coefficients and the reliability tables are in `results/v2/calibration.md`.
+
+| H | predictor | mean_predicted | observed | bias | bias^2 | brier |
+|---|---|---|---|---|---|---|
+| 1 | v2 LightGBM | 0.1762 | 0.1957 | -0.0195 | 0.0004 | 0.1269 |
+| 1 | v2 + Platt (secondary) | 0.1826 | 0.1957 | -0.0132 | 0.0002 | 0.1269 |
+| 1 | frozen v1 LightGBM | 0.1611 | 0.1957 | -0.0347 | 0.0012 | 0.1292 |
+| 1 | logistic (refit on the v2 rows) | 0.1692 | 0.1957 | -0.0265 | 0.0007 | 0.1466 |
+| 1 | train frequency | 0.0878 | 0.1957 | -0.1080 | 0.0117 | 0.1653 |
+| 1 | rolling 4-week frequency | 0.1669 | 0.1957 | -0.0288 | 0.0008 | 0.1723 |
+| 3 | v2 LightGBM | 0.4114 | 0.4426 | -0.0311 | 0.0010 | 0.1656 |
+| 3 | v2 + Platt (secondary) | 0.4182 | 0.4426 | -0.0244 | 0.0006 | 0.1653 |
+| 3 | frozen v1 LightGBM | 0.3882 | 0.4426 | -0.0543 | 0.0030 | 0.1696 |
+| 3 | logistic (refit on the v2 rows) | 0.3999 | 0.4426 | -0.0427 | 0.0018 | 0.1869 |
+| 3 | train frequency | 0.2302 | 0.4426 | -0.2123 | 0.0451 | 0.2780 |
+| 3 | rolling 4-week frequency | 0.3909 | 0.4426 | -0.0516 | 0.0027 | 0.2247 |
+| 6 | v2 LightGBM | 0.5758 | 0.5954 | -0.0196 | 0.0004 | 0.1311 |
+| 6 | v2 + Platt (secondary) | 0.5751 | 0.5954 | -0.0203 | 0.0004 | 0.1312 |
+| 6 | frozen v1 LightGBM | 0.5551 | 0.5954 | -0.0403 | 0.0016 | 0.1348 |
+| 6 | logistic (refit on the v2 rows) | 0.5685 | 0.5954 | -0.0270 | 0.0007 | 0.1436 |
+| 6 | train frequency | 0.3743 | 0.5954 | -0.2211 | 0.0489 | 0.2713 |
+| 6 | rolling 4-week frequency | 0.5469 | 0.5954 | -0.0486 | 0.0024 | 0.1866 |
+
+### The decision rule, applied
+"v2 becomes the default of `predict.py --now` only if its within-oblast AUC is not worse than v1's at all three horizons and its Brier is better at least at H=1" (point values, plain v2 against frozen v1, the same rows; intervals and the Platt variant play no part). Result: AUC 0.6916 / 0.6633 / 0.6645 against 0.6856 / 0.6598 / 0.6536 (v2 / v1 at H = 1 / 3 / 6), Brier at H=1 0.1269 against 0.1292: **v2 is the default** (`results/v2/decision.json`; `predict.py --now --model v1` keeps the old model).
+The production model was refit on every origin whose window closes by the cut (961,920 / 961,872 / 961,800 rows) with the same tree counts and the validation-fit thresholds, saved in `models/v2/`; `model_version` in the prediction log reads `frozen-v2-...` (v1: `frozen-r13-...`).
+
+### Caveats
+- The AUC edge over v1 is small and its intervals include zero at H=1 and H=3 (and touch it at H=6): v2 is not shown to rank better. The Brier edge is consistent and is mostly the level (v1 predicted lower than what happened in this busier period). The rule was fixed before the numbers; it selects v2 on point values, which is a weaker statement than "v2 is better".
+- One 20-day period from one source, with v1 already scored on it; the test days are the most recent ones. v2's training data include the 2026-09-07 to 09-27 days that were v1's forward-test days.
+- The held-out numbers are for the model trained to 09-27; the model `--now` uses is the same model refit on the 20 test days too, which has no held-out score.
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -597,6 +725,7 @@ python scripts/forward_test.py --diagnose
 python scripts/check_live_replay.py
 python scripts/build_combined.py
 python scripts/check_combined.py
+python scripts/train_v2.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -621,6 +750,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/check_live_replay.py`: the live forecast replayed as of 2026-10-10 12:00 (and 12:37) from an archive cut to what the API would have said then must give the forward test's features and probabilities for that hour exactly (offline; two negative controls)
 - `python scripts/build_combined.py`: official data to 2026-08-28 + the API archive from 08-29 + the Aug 19-20 patch -> data/combined/alerts_combined.csv (not committed) and MANIFEST.md (needs translitua)
 - `python scripts/check_combined.py`: features at the splice against official-only and API-only, continuity, leakage -> results/combined_splice_check.md
+- `python scripts/train_v2.py`: v2 on the combined dataset, compared with frozen v1 on 2026-09-28 to 10-17, the decision rule applied -> results/v2/ and models/v2/ (the design is in PROCESS_LOG.md, Round 16; takes a few minutes)
 - `python scripts/score_predictions.py`: the live forecasts in data/predictions/log.csv against the API archive (`--write` -> results/live_forecast_scores.md); every `predict.py --now` run appends to that log
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
@@ -705,6 +835,8 @@ data/source_check/    public posts of the official alert channel for Aug 13–18
 data/api_archive/      Ukraine Alarm API history saved by scripts/archive_api.py (the forward test and the API check read it)
 data/predictions/      the live forecast log (data/predictions/log.csv, appended by scripts/predict.py --now)
 data/combined/         the combined official + API dataset (MANIFEST.md committed, the csv is built by scripts/build_combined.py)
+models/v2/             the v2 production model (written by scripts/train_v2.py, not committed)
+results/v2/            v2 against frozen v1: tables, bootstrap, calibration, decision.json
 docs/api/             the API's swagger json
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
