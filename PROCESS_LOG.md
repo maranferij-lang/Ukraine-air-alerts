@@ -1849,3 +1849,57 @@ Nothing run on data, no code added; this entry is the only change on `live` so f
 - Not done on purpose: `scripts/api_probe.py` and `scripts/archive_api.py`. Their paths, parameters and response fields would be guesses,
   and a probe that guesses the history call could waste rate-limited requests or save the wrong thing. They are written once the real
   swagger is here. The wrong file is left in place for the user to replace (it is their commit).
+
+### Update (2026-10-18, later): the real swagger is in; scripts written, nothing run against the real API
+**Setup:** Cloudflare challenges this sandbox, so I write the code and the user runs everything that touches the API on their own Mac,
+with the token in `UA_ALARM_TOKEN` in their shell. I never see it. The user replaced `docs/api/ukrainealarm_swagger.json` with the real
+swagger (OpenAPI 3.0.4, "Ukraine Alert API" v3, by Stfalcon; commit d7db329).
+
+**What the swagger says** (read from the file; nothing here is measured yet)
+- **Auth:** one `apiKey` scheme named `Token`: header `Authorization`, whose value is the token itself (no `Bearer` prefix is stated); applies to
+  every endpoint. Base URL is not in the file; the host is `https://api.ukrainealarm.com`, paths start `/api/v3`.
+- **Endpoints:** `GET /alerts` (regions with an alert now, with `activeAlerts` and levels Red/Yellow), `GET /alerts/{regionId}` (one region now),
+  `GET /alerts/status` (a "last action" counter for cheap change detection), `GET /alerts/dateHistory?date=YYYYMMDD`,
+  `GET /alerts/regionHistory?regionId=` ("the last 25 alerts of a region"), `GET /regions` (the id tree), `GET /geo-data`, `/geo-data/all`,
+  `POST /geo-data/check-coordinates`, and `POST/PATCH/DELETE /webhook` (push on new alerts and all-clears).
+- **History endpoints:** `dateHistory` (one calendar day per call; the date parameter's example is `20220224`, which is only an example, not a
+  statement of depth) and `regionHistory` (only the last 25 alerts of one region: no use for depth). Records (`AlertDurationResponse`):
+  `regionId`, `regionName`, `startDate`, `endDate`, `duration`, `alertType`, `isContinue`. Not stated: the time zone of the dates, whether a day
+  means "alerts that started that day" or "alerts active that day", and what a date before the start of the history returns.
+- **Alert types** include non-air ones: `UNKNOWN, AIR, ARTILLERY, URBAN_FIGHTS, CHEMICAL, NUCLEAR, INFO, CUSTOM`. A consistency check and any
+  forward test must keep `AIR` only (to be confirmed against the official feed's meaning).
+- **Region ids:** strings. `/regions` returns a tree `states -> regionChildIds -> ...` with `regionType` in `State, District, Community,
+  CityOrVillage, CityDistrict, Null`; names are Ukrainian (`regionName`); `/alerts` also carries `regionEngName`. The history records have only
+  `regionId` and `regionName` (no type, no parent): the level has to be looked up in the `/regions` tree.
+- **Raion level:** the id tree has districts and communities, so the model data exists in principle; **whether `dateHistory` returns
+  district/community-level records (needed for the half-of-raions rule) or only state-level ones is not in the swagger.** The probe counts it.
+- **Rate limits:** none stated anywhere in the file (no 429 documented either). The client keeps at least 2.5 s between calls, waits and
+  retries on HTTP 429 (Retry-After if given), and the archive stops after repeated 429.
+- **How far back history goes:** not stated. That is the key question for the consistency check, and it is what the probe measures.
+
+**Written (all on `live`; run only offline against a fake server so far)**
+- `src/ukrainealarm.py`: small stdlib client (Python 3.9 compatible). Token only from `UA_ALARM_TOKEN`, sent as the `Authorization` header,
+  never printed, logged or saved; every failure is reduced to a status code (no response text, no exception message); 0 = no connection,
+  598 = HTTP 200 but not JSON (for example a challenge page). `UA_ALARM_BASE` exists for tests and may only point at the real API or at
+  `http://127.0.0.1` (the token must not go elsewhere). Also the Ukrainian-name -> our-oblast-name mapping (25 names; Crimea and Sevastopol are
+  not in our data) and `region_index()` (id -> name, type, state).
+- `scripts/api_probe.py`: about 20-25 requests: `/regions` (counts by level, how many of our 25 oblasts are matched by name, the unmatched names),
+  `/alerts/status`, `/alerts`, one `regionHistory` (Kharkivska), then `dateHistory` for a ladder of dates (2022-02-24, 2023-01-01, 2024-01-01,
+  2025-01-01, 2025-07-01, 2026-01-01, 2026-06-01, 2026-08-15, 2026-08-31 (inside our official feed's outage), 2026-09-05, yesterday) and, if the
+  oldest ones are empty, a bisection to the first date with data. Per date: status, items, ids by level, alert types, `isContinue`, earliest and
+  latest raw start strings, whether the strings carry a time zone, how many starts fall on / before / after the requested day (UTC). Prints a
+  `PROBE SUMMARY` block that is safe to paste; raw answers go to `data/api_raw/` (added to `.gitignore`; the user decides what to commit).
+- `scripts/archive_api.py`: daily mode saves `/regions` (only when changed), `/alerts` (a timestamped snapshot) and `dateHistory` for the last 3
+  days (refetched each run because a running alert gets its end later); `--from/--to` backfills a range and is resumable (existing files older
+  than 3 days are skipped). Files go to `data/api_archive/` as the API sent them, plus `log.csv` (time, endpoint, date, status, items, bytes). A new empty answer
+  never replaces a file that has alerts. Stops on 401/403 and after repeated 429.
+
+**Tests (offline, a fake local API with a history cutoff at 2023-03-10, a one-time 429, and a check of the Authorization header):**
+the probe found the cutoff exactly by bisection (24 requests, the 429 handled); the archive wrote daily, backfill and resume as intended, a wrong
+token stopped it with "HTTP 401" and a missing token or a foreign `UA_ALARM_BASE` was refused; the fake token appears in no output and no file,
+and the fake server's reply to a wrong token (which echoed the header) never reached an output either. The test outputs were deleted.
+**Not tested:** anything against the real API: the real response shapes (field names come from the swagger only), the real name mapping, the
+real history depth, the real rate limit.
+
+**Open:** the probe output from the user's Mac decides the consistency check (a real overlap with the official data or a sanity check only) and
+the forward test.

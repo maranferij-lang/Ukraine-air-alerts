@@ -17,3 +17,6 @@ data/telegram/cache/
 
 # upstream parser files fetched by scripts/source_check.py
 data/source_check/upstream/
+
+# raw answers of scripts/api_probe.py (the Ukraine Alarm API); what to commit is decided by hand
+data/api_raw/
