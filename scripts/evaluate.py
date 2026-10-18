@@ -378,8 +378,11 @@ def main():
         + md_table(by_period) + "\n")
     wrote(OUT / "test_table_by_period.md")
 
-    br = pd.DataFrame(base_rates).sort_values("b_start_6", ascending=False)
+    br = pd.DataFrame(base_rates)
     br.index.name = "oblast"
+    # rate first, oblast name second: oblasts with the same rate (three have exactly one new alert) must come out in the same order on every machine,
+    # and the default sort is not stable (a Mac with numpy 2.0.2 swapped two of them)
+    br = br.reset_index().sort_values(["b_start_6", "oblast"], ascending=[False, True], kind="stable").set_index("oblast")
     (OUT / "base_rates_by_oblast.md").write_text(
         "Base rate of (b) new alert starts in (t, t+H] per oblast, test rows (24 days).\n\n"
         + md_table(br.reset_index()) + "\n")

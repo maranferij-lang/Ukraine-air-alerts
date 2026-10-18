@@ -74,7 +74,7 @@ python scripts/check_no_peeking.py
 ```
 - `evaluate_news.py` takes about 2 min and rebuilds `results/news/`; `evaluate_telegram.py` takes about 3 min and rebuilds `results/telegram/`; `check_no_peeking.py` takes about 25 s and prints the leakage check.
 - **Tested** on Linux from a fresh clone and a fresh venv: Python 3.11, 3.12 and 3.13 (pandas 3.0.6, numpy 2.4–2.5, matplotlib 3.11.2, lightgbm 4.7.0) and Python 3.9 (pandas 2.3.3, numpy 2.0.2, matplotlib 3.9.4, lightgbm 4.6.0); on a Mac with Python 3.9 every number matched. The Telegram line was run on Python 3.13 and 3.9 only.
-- **Tables in `results/` are byte-identical across the machines we tried. Figures can differ slightly (fonts, matplotlib version): on Python 3.9 the four PNGs differ by a few pixels, the numbers behind them do not.**
+- **Tables in `results/` are byte-identical across the machines we tried. One table, `base_rates_by_oblast.md`, once differed in the row order of oblasts with the same rate (a Mac swapped two of them); the tie order is now fixed by sorting on the oblast name. Figures can differ slightly (fonts, matplotlib version): on Python 3.9 the four PNGs differ by a few pixels, the numbers behind them do not.**
 
 ## Try it: what did the model say at a past hour?
 ```bash
