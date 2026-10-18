@@ -43,20 +43,30 @@ def day_files(folder):
     return out
 
 
-def load_api(files):
-    rows = []
-    for day, f in files.items():
-        for a in json.loads(f.read_text(encoding="utf-8")):
-            rows.append({"regionId": a.get("regionId"), "name": a.get("regionName") or "", "start": a.get("startDate"),
-                         "end": a.get("endDate"), "type": a.get("alertType"), "open": bool(a.get("isContinue"))})
-    df = pd.DataFrame(rows)
+def rows_from_items(items):
+    """API dateHistory items (dicts) -> a DataFrame of alerts with parsed UTC times."""
+    rows = [{"regionId": a.get("regionId"), "name": a.get("regionName") or "", "start": a.get("startDate"),
+             "end": a.get("endDate"), "type": a.get("alertType"), "open": bool(a.get("isContinue"))} for a in items]
+    df = pd.DataFrame(rows, columns=["regionId", "name", "start", "end", "type", "open"])
     df["start"] = pd.to_datetime(df["start"], utc=True, format="ISO8601", errors="coerce")
     df["end"] = pd.to_datetime(df["end"], utc=True, format="ISO8601", errors="coerce")
     return df
 
 
-def to_official_rows(api, raions):
-    """API alerts -> our official-row schema, plus a count of what was dropped and why."""
+def load_api(files):
+    items = []
+    for day, f in files.items():
+        items.extend(json.loads(f.read_text(encoding="utf-8")))
+    return rows_from_items(items)
+
+
+UNKNOWN_END = pd.Timestamp("2100-01-01", tz="UTC")  # an alert that is still running: its end is not known
+
+
+def to_official_rows(api, raions, keep_open=False):
+    """API alerts -> our official-row schema, plus a count of what was dropped and why.
+    keep_open=False (the checks): alerts without an end are dropped. keep_open=True (live forecasts): they are kept as
+    running, with the end set to UNKNOWN_END."""
     from translitua import UkrainianKMU, translit
     raion_oblast = raions.set_index("raion")["oblast"]
     oblast_names = set(raions["oblast"]) | {"Kyiv City"}
@@ -66,8 +76,13 @@ def to_official_rows(api, raions):
     n["after joining the days' files"] = len(api)
     air = api[api["type"] == "AIR"]
     n["not AIR (dropped)"] = len(api) - len(air)
-    closed = air[air["end"].notna() & (air["end"].dt.year > 2000) & ~air["open"]]
-    n["still open or without an end (dropped)"] = len(air) - len(closed)
+    has_end = air["end"].notna() & (air["end"].dt.year > 2000) & ~air["open"]
+    closed = air[has_end]
+    if keep_open:
+        closed = pd.concat([closed, air[~has_end].assign(end=UNKNOWN_END)])
+        n["still open (kept as running, end unknown)"] = int((~has_end).sum())
+    else:
+        n["still open or without an end (dropped)"] = len(air) - len(closed)
     rows, dropped = [], {"hromada level (not used by the rule)": 0, "district not in our raion list": {}, "other name": {},
                          "oblast not in our data (Crimea, Sevastopol, Luhansk)": 0}
     for r in closed.itertuples():
@@ -76,7 +91,7 @@ def to_official_rows(api, raions):
             raion = translit(name, UkrainianKMU)
             raion = RAION_ALIASES.get(raion, raion)
             if raion in raion_oblast.index:
-                rows.append((raion_oblast[raion], raion, "", "raion", r.start, r.end))
+                rows.append((raion_oblast[raion], raion, "", "raion", r.start, r.end, r.regionId))
             else:
                 dropped["district not in our raion list"][name] = dropped["district not in our raion list"].get(name, 0) + 1
         elif "територіальна громада" in name or (name.startswith("м. ") and name != "м. Київ"):
@@ -84,12 +99,14 @@ def to_official_rows(api, raions):
         elif name == "м. Київ" or name.endswith("область") or name.endswith("Республіка Крим"):
             ob = our_name(name)
             if ob in oblast_names:
-                rows.append((ob, "", "", "oblast", r.start, r.end))
+                rows.append((ob, "", "", "oblast", r.start, r.end, r.regionId))
             else:
                 dropped["oblast not in our data (Crimea, Sevastopol, Luhansk)"] += 1
         else:
             dropped["other name"][name] = dropped["other name"].get(name, 0) + 1
-    out = pd.DataFrame(rows, columns=["oblast", "raion", "hromada", "level", "start", "end"])
+    out = pd.DataFrame(rows, columns=["oblast", "raion", "hromada", "level", "start", "end", "regionId"])
+    if not keep_open:
+        out = out.drop(columns="regionId")  # the checks use the official-row schema; the live path keeps the id to compare with the active list
     n["raion rows"] = int((out["level"] == "raion").sum())
     n["oblast-level rows"] = int((out["level"] == "oblast").sum())
     return out.sort_values("start", kind="stable").reset_index(drop=True), n, dropped

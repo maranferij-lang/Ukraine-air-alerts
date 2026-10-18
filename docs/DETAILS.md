@@ -550,13 +550,13 @@ python scripts/evaluate.py
 python scripts/plot_timeline.py
 python scripts/check_no_peeking.py
 python scripts/predict.py --at "2026-09-05 14:00" --all
-python scripts/predict.py --now --oblast Kharkivska
 pip install translitua
 python scripts/source_check.py
 python scripts/api_check.py
 python scripts/sensitivity_aug19.py
 python scripts/forward_test.py --selftest
 python scripts/forward_test.py --diagnose
+python scripts/check_live_replay.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -578,7 +578,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/plot_timeline.py`: figures/forecast_timeline.png (+ .csv): the saved H=1 model, hour by hour, for two oblasts on five test days (needs models/)
 - `python scripts/check_no_peeking.py`: leakage check: baseline inputs and model features
 - `python scripts/predict.py --at "2026-09-05 14:00" --all`: model at a past hour (needs models/)
-- `python scripts/predict.py --now --oblast Kharkivska`: checks the official channel for newer data; there is none, so it says so and shows the latest hour we have
+- `python scripts/check_live_replay.py`: the live forecast replayed as of 2026-10-10 12:00 (and 12:37) from an archive cut to what the API would have said then must give the forward test's features and probabilities for that hour exactly (offline; two negative controls)
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
 - `python scripts/api_check.py`: the Ukraine Alarm API history (data/api_archive/) against our official data, same rules for both -> results/api_check.md (needs translitua)
@@ -606,6 +606,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/fetch_gdelt_events.py`: re-pull GDELT events, about 9 minutes, needs network -> data/news/
 - `python scripts/fetch_telegram_kpszsu.py`: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
 - `python scripts/api_probe.py` and `python scripts/archive_api.py`: talk to the Ukraine Alarm API, need your own token in the shell variable `UA_ALARM_TOKEN` (never in a file) -> data/api_raw/ (git-ignored), data/api_archive/
+- `python scripts/predict.py --now`: the live forecast for the last completed hour from the API (tops up data/api_archive/, needs `UA_ALARM_TOKEN` and `pip install translitua`; see the README, "Try it"); `--force` on archive_api.py refetches saved days
 
 ## Definitions
 

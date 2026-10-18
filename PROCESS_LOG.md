@@ -2087,3 +2087,44 @@ Contents entry and the `data/api_archive/` and `docs/api/` layout lines. The old
 **Caveats:** 41 days, one period, one source; the API and the official feed are probably not independent (99.8% of 14,976 oblast-hours agree), so this says the frozen models hold up on a second feed of the same alerts, not that either feed is
 the real world; the period is busier than the old test; Sep 6 and Oct 18 are not scored.
 **Next (not started, as asked):** `predict.py --now` on live API data; what it needs is written in the reply to the user (token on their machine, a complete 29-day archive, open alerts handled as unknown-end, an offline replay test).
+
+### Update (2026-10-18/19): `predict.py --now` on live API data (built and tested offline; not yet run against the real API)
+**User's decisions:** (1) on a missing day, first fetch it from the API automatically; if the API still cannot give it, refuse, name the missing days and print the exact archive command to fix it; no scaling, no
+filling; (2) running alerts (no end) count as running with an unknown end; (3) a freshness line, and the last completed hour as the origin; (4) replace the Telegram path, no fallback; (5) the replay test first,
+offline: as of 2026-10-10 12:00 from a truncated archive, the same features as the forward test at that hour; (6) output per oblast: the probability for H = 1/3/6 and whether it is above the frozen threshold, sorted
+by H = 1, plus one line saying the model tends to predict a bit low in the current period (per the forward test).
+
+**Replay test first (`scripts/check_live_replay.py`, offline), PASSED:** the archive is cut by `live_api.as_of` to what the API would have said at the moment (only alerts that had started; every alert that ended later has
+no end, `isContinue` true, end year 0001), and only the days the live path reads (33 day files). As of **2026-10-10 12:00 UTC**: 20,155 items read, 19,661 after the cut, 66 of them running; 7 of 24 oblasts under alert at
+the origin. The live path (the same feature code as the forward test, no outage mask) gives **0 mismatches in 936 feature values and 0 in 72 LightGBM probabilities** against the forward test's full-data pipeline at
+that hour. As of **12:37** (the origin is still 12:00, everything is cut at it): the same, 0 and 0 (76 running alerts at that moment). Negative controls, which must differ and do: running alerts dropped (213 / 159 feature
+mismatches, 31 / 26 probabilities) and features read at the next hour (520 mismatches, 69 probabilities). So the open-alert handling, the day-file assembly and the cut at the origin reproduce the forward test.
+
+**What was built**
+- `scripts/live_api.py`: `origin_for` (the last completed hour), `needed_days` (the UTC days from t - 32 days to t: an alert is in the file of every day it was active), `read_days`, `live_rows` (running alerts kept with
+  an unknown end), `features_at` (cut at the origin by `known_at`, no mask), `probabilities`, `stale_open`, and `live_forecast` (the live run). `scripts/api_check.py`: `rows_from_items`, `to_official_rows(keep_open=...)`
+  (default unchanged: `results/api_check.md` and the forward-test table are byte-identical after the change; the running alerts keep their `regionId` only in the live mode).
+- `scripts/archive_api.py`: `fetch_days`, `fetch_active` as importable functions (same behaviour), and `--force` (refetch days that are already saved).
+- `scripts/predict.py --now`: the Telegram path is gone (no channel page, no fallback of any kind). `--now` needs `UA_ALARM_TOKEN`; `--oblast` is optional (all oblasts by default) and is checked **before** any request.
+  `--at` is unchanged. The old `--now` message (nothing newer than the snapshot) no longer exists.
+- Output of `--now`: the origin hour in UTC and Kyiv time; a freshness line (now, the newest alert start and end in the API, when the API's active-alerts list was last updated, and the sentence that a quiet spell and a late API
+  look the same from here); the forward-test note read from `results/forward_api/calibration.md` ("mean predicted against observed 0.152 against 0.180 at 1 h, 0.368 against 0.414 at 3 h, 0.531 against 0.571 at 6 h ... nothing is
+  recalibrated"); the frozen thresholds; a table per oblast sorted by the 1 h probability: alert now, probability and above/not above the frozen threshold for 1, 3 and 6 h.
+- Missing days: the days from t - 32 days to today are fetched when they are not saved, and the last three are always refreshed (an alert still running when a day was saved has no end in that file). If any of them cannot be
+  fetched (HTTP code per day printed, no response text), it refuses: "Missing or not refreshed: <days> ... python scripts/archive_api.py --from <first> --to <last>". A refused token (401/403) is reported as such, with no archive command.
+- A guard against stale running alerts: a running alert older than the refreshed days whose region has a newer running alert, or is not in the API's active list now, means its day file is out of date (it may have ended after the
+  file was saved): it refuses and prints `archive_api.py --from <day> --to <today> --force`. Written after the first test showed that checking only "is the region active now" misses a region that has a different alert running.
+
+**Offline tests (a fake local API that serves the real saved days as they would have looked at 2026-10-10 12:37; the token never leaves the process environment):** happy path (a temp archive missing Oct 5-10: 6 days fetched, a
+24-row table, all 72 probabilities equal the forward test's at that hour); the API answering 500 for one day (refuses, names it, prints the command); a refused token (HTTP 401 reported, no command); a stale running alert in an
+old day file (refuses, prints the `--force` command); `--oblast Kyivska`; an ambiguous `--oblast Kyiv` (rejected before any request); the fake token appears in no output and no saved file. `archive_api.py` was re-tested after the
+refactor (daily, backfill, resume, `--force`).
+- **A test mishap, caught and undone:** my first archive test used `runpy`, which re-executes the script in a fresh namespace, so the temporary-folder patch did not apply and the test wrote into the real `data/api_archive/`:
+  a fake active-alerts snapshot, rows in `log.csv`, and (with `--force`) five day files (Oct 1-5) overwritten by the fake server's re-serialised copies. It was seen in `git status` at once; the tracked files were restored with
+  `git checkout`, the stray folders removed, `git status` for `data/` is clean, and nothing was committed. The test was redone importing the module (with an assertion that its output folder is a temp one).
+
+**Not tested (cannot be from here):** anything against the real API: the real `/api/v3/alerts` payload (the code uses `regionId` and `lastUpdate` from the swagger), real latency and rate limits for a first top-up
+(about 6 s per call; a first run after a few days needs a handful of calls), and the first live forecast itself. The stale-running guard could refuse wrongly if the real active list does not contain district-level ids; it
+only matters for a running alert older than 3 days, and the message names it.
+**New requirements on the user's machine:** `pip install translitua` (the API names are Ukrainian); `models/frozen.json`, which `scripts/evaluate.py` now writes (models/ is not committed), so `python scripts/evaluate.py` must be run once
+after pulling; the token in `UA_ALARM_TOKEN`. README ("Try it") and DETAILS (run order) describe `--now`; links and anchors checked (0 problems), no code block has `#` or a backtick; the old results are byte-identical.

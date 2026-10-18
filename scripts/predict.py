@@ -2,15 +2,16 @@
 
     python scripts/predict.py --at "2026-09-05 14:00" --oblast Kyivska
     python scripts/predict.py --at "2026-09-05 17:00+03:00" --all
+    python scripts/predict.py --now                      (live, from the Ukraine Alarm API; needs UA_ALARM_TOKEN)
     python scripts/predict.py --now --oblast Kharkivska
 
 For origin t (a whole hour, UTC unless the time carries an offset) prints the probability that a new
 alert starts in (t, t+H] for H = 1, 3, 6 (target (b)), from the LightGBM models scripts/evaluate.py
 saved in models/, next to the three baselines and to what actually happened.
 
---now checks the official alert channel (https://t.me/s/air_alert_ua, public page, no token) for anything newer than our
-snapshot. If there is nothing newer, or the channel cannot be reached, it says so in one sentence and shows the forecast for
-the latest hour we have, labelled as such. It does not turn live posts into forecasts, and there is no other fallback.
+--now forecasts the last completed hour from the Ukraine Alarm API instead (scripts/live_api.py): it tops up data/api_archive/ (the days not saved yet and the last
+three), refuses and names the missing days if it cannot get a complete history (no scaling, no filling), and prints every oblast's probability for H = 1, 3, 6 and whether
+it is at or above the frozen threshold, sorted by H = 1. Needs your token in the environment variable UA_ALARM_TOKEN and the network; the models are the frozen ones.
 
 The inputs are recomputed from the alert rows as they looked at t: only alerts that had started by
 t, with the end of any alert still running at t unknown (the same cut scripts/check_no_peeking.py
@@ -64,43 +65,6 @@ def load_models():
     freq = {H: pd.read_csv(MODELS / f"frequency_b_start_h{H}.csv").set_index(["oblast", "hour", "weekday"])["rate"]
             for H in HORIZONS}
     return info, boosters, freq
-
-
-CHANNEL_URL = "https://t.me/s/air_alert_ua"
-SNAPSHOT_MARGIN = pd.Timedelta(hours=2)  # the channel's last posts open alerts that the csv cannot hold yet (no end)
-
-
-def channel_newest_post(url=CHANNEL_URL, timeout=10):
-    """(time of the newest post on the channel's public page, None) or (None, short reason)."""
-    import re
-    import urllib.request
-    reason = "unknown"
-    for attempt in range(2):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ukraine-air-alerts course project (one request)"})
-            page = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
-            times = re.findall(r'<time datetime="([^"]+)"', page)
-            if times:
-                return pd.Timestamp(times[-1]).tz_convert("UTC"), None
-            reason = "the page had no posts"
-        except Exception as e:  # network down, blocked, reset, timeout, bad page: all end in the same fallback
-            reason = 'timed out' if 'timed out' in str(e).lower() else 'network error' if isinstance(e, OSError) else type(e).__name__
-        if attempt == 0:
-            import time
-            time.sleep(2)
-    return None, reason
-
-
-def now_notice(newest, reason, snapshot_last, latest):
-    """One plain sentence: what the channel says about 'now', and that the forecast shown is for the latest hour we have."""
-    shown = f"here is the forecast for the latest hour we have, {latest:%Y-%m-%d %H:%M} UTC, which is not now"
-    if newest is None:
-        return f"Could not reach the official alert channel ({reason}), so we cannot check for newer data; {shown}."
-    if newest > snapshot_last + SNAPSHOT_MARGIN:
-        return (f"The official alert channel has posts newer than our snapshot (up to {newest:%Y-%m-%d %H:%M} UTC), but this version "
-                f"cannot turn live posts into forecasts yet; {shown}.")
-    return (f"The official alert channel has posted nothing since {newest:%Y-%m-%d %H:%M} UTC, which is where our data ends too, "
-            f"so no newer official data exists; {shown}.")
 
 
 def parse_origin(text):
@@ -244,15 +208,21 @@ def main():
     when = ap.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", help='forecast origin, e.g. "2026-09-05 14:00" (UTC) or '
                                    '"2026-09-05 17:00+03:00"; rounded down to the hour')
-    when.add_argument("--now", action="store_true", help="check the official channel for newer data; if there is none "
-                                                          "(or it cannot be reached) say so and show the latest hour we have")
-    who = ap.add_mutually_exclusive_group(required=True)
+    when.add_argument("--now", action="store_true", help="live forecast for the last completed hour from the Ukraine Alarm API (needs UA_ALARM_TOKEN in "
+                                                          "the environment); every oblast unless --oblast is given")
+    who = ap.add_mutually_exclusive_group()
     who.add_argument("--oblast", help='oblast name or a unique start of it, e.g. "Kyivska", "Kyiv City", "Lviv"')
     who.add_argument("--all", action="store_true", help="every oblast, one row each")
     args = ap.parse_args()
+    if args.at and not (args.oblast or args.all):
+        ap.error("--at needs --oblast or --all")
+    if args.now:
+        load_models()  # the frozen models must be there (scripts/evaluate.py writes them)
+        from scripts.live_api import live_forecast
+        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names))))
 
     info, boosters, freq = load_models()
-    t, round_note = (None, None) if args.now else parse_origin(args.at)
+    t, round_note = parse_origin(args.at)
     official, raions = load_inputs()
     oblasts = sorted(official["oblast"].unique())
     first, end = official["start"].min().ceil("D"), data_end(official)
@@ -260,12 +230,6 @@ def main():
         fail("models/ was fitted on a different data snapshot. Run `python scripts/evaluate.py` again.")
     test_start = pd.Timestamp(info["test_start"])
     last = end - pd.Timedelta(hours=1)
-    notice = None
-    if args.now:
-        newest, reason = channel_newest_post()
-        snapshot_last = max(official["start"].max(), official["end"].max())
-        notice = now_notice(newest, reason, snapshot_last, last)
-        t = last
     if not first <= t <= last:
         fail(f"--at must be between {first:%Y-%m-%d %H:%M} and {last:%Y-%m-%d %H:%M} UTC, the hours covered by "
              f"the official data in data/raw/.")
@@ -279,9 +243,6 @@ def main():
     when = f"{local:%H:%M} Kyiv time on {local.day} {local:%b}"
     pct = lambda v: f"{100 * v:.0f}%"
     yn = lambda v: {1: "yes", 0: "no", -1: "n/a"}[int(v)]
-    if notice:
-        print(textwrap.fill(notice, 100))
-        print()
     if args.all:
         print(textwrap.fill(plain_all(table, when), 100))
     else:
