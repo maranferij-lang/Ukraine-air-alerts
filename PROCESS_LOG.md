@@ -2128,3 +2128,34 @@ refactor (daily, backfill, resume, `--force`).
 only matters for a running alert older than 3 days, and the message names it.
 **New requirements on the user's machine:** `pip install translitua` (the API names are Ukrainian); `models/frozen.json`, which `scripts/evaluate.py` now writes (models/ is not committed), so `python scripts/evaluate.py` must be run once
 after pulling; the token in `UA_ALARM_TOKEN`. README ("Try it") and DETAILS (run order) describe `--now`; links and anchors checked (0 problems), no code block has `#` or a backtick; the old results are byte-identical.
+
+### Update (2026-10-18/19): the first live run, a cross-machine difference in one table, and the close of round 14
+**First live run (reported by the user, on their Mac):** `predict.py --now` against the real API at 18:38 UTC: origin 18:00 UTC, freshness 0 min, no refusal, all 24 oblasts printed. So the code path that could only be tested offline (the
+real `/api/v3/alerts` payload, the top-up of the archive, the stale-alert guard staying quiet) worked on real data on the first try. The archive files written by that run are on the user's machine and are **not committed** (their decision).
+
+**A cross-machine difference the user saw after running `scripts/evaluate.py` on the Mac:** `results/base_rates_by_oblast.md` and the two figures (`figures/model_vs_baselines_h6.png`, `figures/reliability_h6.png`) showed as modified; the user restored
+them with `git checkout`. Looked at here (I cannot see the Mac's diff):
+- **Figures:** expected and already documented (README: figures can differ slightly with fonts and the matplotlib version; Python 3.9 draws them a few pixels differently). The numbers behind them are the results tables.
+- **`base_rates_by_oblast.md`: cause not confirmed, one candidate found.** The table is `pd.DataFrame(base_rates).sort_values("b_start_6", ascending=False)` (`scripts/evaluate.py`, line 381): one single-key `sort_values` with the default, **unstable** sort.
+  Three oblasts tie exactly on that key (Ivano-Frankivska, Lvivska, Zakarpatska: one new alert each, b_start_6 = 0.0106), so their relative order is whatever the sort algorithm of that numpy build does with ties. On this machine (x86, numpy 2.5.3,
+  pandas 3.0.5) the default, quicksort, stable and heapsort all give the committed order, so I cannot reproduce a difference here. Against the candidate: a Mac run in round 8 matched every table byte for byte with the same ties, so if the Mac's
+  environment did not change since, the tie order is not the whole story. The other single-key sorts in the code have no ties in the committed outputs (`lowest_bin_h6.md`: no shared counts; the feature-importance gains are floats); every other sort is stable
+  or multi-key.
+- **Does it matter? No for any result.** The table is a descriptive per-oblast breakdown of the target columns over the same test rows that feed `test_table.md`, `calibration.md` and the rest. The user reports that only this table and the two figures differed;
+  since all the metric tables matched byte for byte, the rows, targets and models are identical on the two machines, so the per-oblast base rates cannot differ in value; at most the row order of tied oblasts or the last printed digit. No model number, baseline,
+  forward-test number or README number comes from this table.
+- **To confirm** (not done, needs the Mac): `python -c "import sys, numpy, pandas; print(sys.version.split()[0], numpy.__version__, pandas.__version__)"`, then `python scripts/evaluate.py` and `git diff results/base_rates_by_oblast.md` (it shows whether only the three tied rows moved).
+- **A fix, if wanted (not applied; evaluate.py and the committed tables stay as they are):** sort by the rate and then by the oblast name, `sort_values(["b_start_6", "oblast"], ascending=[False, True])` after `reset_index()`; on this machine that reproduces the committed file byte for byte, and it would make the table
+  the same on any machine. The README sentence "Tables in `results/` are byte-identical across the machines we tried" is not changed here because the cause is unconfirmed; if the tie order is confirmed, the sentence should name this one exception or the sort should be fixed.
+
+### Round 14 closed (branch `live`; main untouched at 5c8cede)
+**What round 14 delivered** (all on `live`, logged above in order): the alerts.in.ua detour (docs read, token was for another service); the Ukraine Alarm swagger read; `src/ukrainealarm.py` (client: token only from `UA_ALARM_TOKEN`, status codes only, adaptive rate limit),
+`scripts/api_probe.py` (history reaches back to 2025-10-03), `scripts/archive_api.py` (daily save, resumable backfill, `--force`, importable `fetch_days`/`fetch_active`), the archive of 74 days (Aug 6 - Oct 18) the user pushed; `scripts/api_check.py` and
+`results/api_check.md` (API vs official: 99.8% of 14,976 oblast-hours agree; one wave on Aug 19-20 missing from the official feed); `scripts/sensitivity_aug19.py` and `results/aug19_sensitivity.md` (putting it back moves the model's AUC by at most +0.0031);
+`scripts/forward_test.py` and `results/forward_api/` (frozen models, 41 days of API data, no outage mask, LightGBM ahead of every baseline on AUC and Brier at H = 1, 3, 6; calibration in the large and the Brier split; a secondary masked run);
+`scripts/live_api.py`, `scripts/check_live_replay.py` and the API version of `predict.py --now` (replay test passed: 0 of 936 features and 0 of 72 probabilities differ from the forward test; run once on the real API); README and DETAILS sections, the Aug 19-20
+limitation, the Sheptytskyi rename stated as fact. `models/frozen.json` (thresholds, logistic weights) is written by `scripts/evaluate.py` (models/ is not committed); the old test's tables are unchanged by the round (byte-identical on the machine used here).
+**Rules check (CLAUDE.md):** no leakage (features at t from what was known at t; the leakage check on API rows and the replay test passed); the old test window is unchanged and the forward test is reported separately; every model number is next to the baselines; thresholds frozen, none chosen on test;
+`data/raw` never edited; the volunteer feed was not used; the token never appeared in a file, a commit, a log line or an error message (status codes only; it was typed once in this conversation, so rotate it).
+**Open items, all outside this round's scope:** (1) the `base_rates_by_oblast.md` difference on the Mac: confirm the cause and decide on the sort fix (above); (2) the archive updates from the live run, on the user's machine, uncommitted; (3) the optional Jul 1 - Aug 5 backfill (an old-window test on API features),
+skipped; (4) `live` is not merged anywhere: the submitted state is `main` (round 13); (5) if the README sentence about byte-identical tables should change after (1).
