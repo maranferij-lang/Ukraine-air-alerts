@@ -8,6 +8,8 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [Model (`scripts/evaluate.py`, `src/features.py`)](#model-scriptsevaluatepy-srcfeaturespy): the features and the LightGBM setup.
 - [News and text data](#news-and-text-data): why the main model uses no text, and two experiments that were tried: GDELT news (a negative result) and Telegram posts (a real gain that lasts only minutes, so a nowcasting signal and not a forecast). The main model uses neither.
 - [Forward test on the Ukraine Alarm API](#forward-test-on-the-ukraine-alarm-api): the frozen models scored on 41 days of live API data, separate from the old test.
+- [The combined dataset](#the-combined-dataset-official-data--the-api-archive): official data up to 2026-08-28, the API archive after it, the Aug 19-20 patch; every splice point and its checks.
+- [The live forecast log and its scorer](#the-live-forecast-log-and-its-scorer)
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -499,6 +501,42 @@ Same frozen models, same thresholds, point estimates only.
 - The API and the official feed are probably not independent (the API names the official channel among its sources): `results/api_check.md` shows our rules give the same oblast series from both (99.8% of 14,976 oblast-hours agree), not that either is right about reality.
 - The period is busier than the old test and the models predict low (see the calibration table); nothing was recalibrated. Not compared: anything after 2026-10-17, and Sep 6 (neither in the official trusted range nor in this test).
 
+## The combined dataset (official data + the API archive)
+
+For the next round. **Nothing is trained on it yet.** Built by `scripts/build_combined.py` (offline, deterministic) into `data/combined/alerts_combined.csv` (about 22 MB, not committed; rebuild it and compare the SHA-256 in `data/combined/MANIFEST.md`, which is committed together with the counts below).
+Checked by `scripts/check_combined.py` -> `results/combined_splice_check.md`. The SHA-256 in the manifest is for the committed archive (74 days, to 2026-10-18); if later days are saved, the file simply has them too and the hash changes. Rows keep the schema of the official file plus a `source` column: `official`, `api`, `api_patch`.
+
+**Every splice point**
+1. **Official -> API at T = 2026-08-29 00:00:00 UTC.** Official rows that END at or before T are kept (183,292). API rows (alertType AIR, closed, our oblasts) that END after T are kept (27,497); the 8,237 API rows that end earlier are not used because the official side has those alerts.
+   An alert that was running at T therefore comes from the API, with the API's start time. The 46 official rows that span T (start before, end after: 43 raion rows and 3 hromada rows; 43 of 46 have an API row of the same raion starting within 60 s, the 3 others are the hromada
+   rows, which do not exist on the API side) are dropped. The official rows that START at or after T (2,025, dated 2026-08-29 00:06 to 09-07 05:28 UTC: 88 on Aug 29, 241 on Sep 2, then 448, 461, 381, 357 and 49 on Sep 3 to 7, so the official outage was patchy, not a blackout) are not used either: after T there is one source, so there is no second splice and no hole.
+2. **The Aug 19-20 patch (`api_patch`).** The API's raion rows of Chernihivska and Kyivska oblast that start between 2026-08-19 19:00 and 2026-08-20 12:00 UTC (18 rows) are added on top of the official rows. The official feed has 6 rows of the same wave (1 Chernihivska, 5 Kyivska); they are
+   kept as they are, and since episodes are unions, an overlap changes nothing. This is the same set that `results/aug19_sensitivity.md` put back (25 oblast-hours change from quiet to under alert).
+3. **Time stamps.** The official side has second resolution; the API side has microseconds (written as they are). Where the two describe the same alert they differ by a fraction of a second, usually (results/api_check.md: 9,263 of 9,360 official raion rows have an API row of the same raion starting within 5 s).
+4. **Levels.** After T there are raion rows and oblast-level rows (only `Kyiv City` comes as an oblast-level row from the API); there are no hromada rows (the API's community records are dropped, as `src/panel.py` ignores hromada alerts anyway). Before T the official hromada rows (20,653) stay in the file and are ignored by the rule.
+5. **Names and filters.** Oblast and raion names are the official feed's (API names are mapped by transliteration; Sheptytskyi raion is our Chervonohradskyi raion, a 2024 rename); the raion list stays the official one (118 raions) for the half-of-raions rule; Luhansk (permanent alert) is left out as in `src/dataset.load_inputs`; alertType other than AIR is dropped.
+6. **The end.** Alerts that were still running when the API was last fetched (no end, `isContinue`) are left out as in the forward test (80 rows: 2 hromada rows from Sep 17, 78 rows from Oct 18 09:51 on); the archive is complete up to 2026-10-18 06:00 UTC (`TRUSTED_END`), which is the end of the data to use. Rows after it are in the file but not trustworthy as an end.
+7. **The outage mask is not used on this dataset.** The official feed's outage (2026-08-29 to 09-02) is covered by the API, so the combined series has no unobserved period: features are built with `build_features(..., outages=[])`, and the rows that `src.dataset.split` removes for touching `OFFICIAL_OUTAGES`
+   must not be removed for the combined data (they are observed). The old test and `evaluate.py` still use the official-only data and the mask.
+
+**Does a feature behave the same at the splice?** (`results/combined_splice_check.md`)
+- Before the splice, on rows the patch cannot reach (2026-08-12 to 08-19 19:59 and 08-27 20:00 to 08-28 23:00), the combined features equal the official-only ones exactly (all 13 features, 0.0000 mean difference). From 08-19 20:00 the 7-day windows contain the patched wave, so they differ there by design (for example
+  `starts_7d` mean difference 0.13 over 5,280 oblast-hours).
+- Around and after the splice (T -48 h to 09-05), combined against API-only: equal within 0.001 on all features but a handful of rows (largest differences 0.06 h in `hours_since_start`, 0.011 in `share_6h`); at the splice hour all 24 oblasts have the same `now`. `freq4w` (2026-09-03 to 09-19): 9,760 of 9,792 rows equal, the others differ by at most 0.25 (one of the four weekly lags differs).
+- Continuity: the daily means of the main features run smoothly through 08-29 (the table in the check file). `starts_7d` and `share_7d` change more across T than most neighbouring 48 h blocks, because they are 7-day windows of a series whose alert rate was rising from 08-27 on; the two checks above show the combined
+  series equals the official series before T and the API series after T, so that change is in the data, not made by the splice. The number of oblast episodes per day is steady across T (113 on 08-28, 107 on 08-29).
+- Leakage: features at 24 origins around T rebuilt from combined rows cut at t equal the full-data features (22,464 values, 0 mismatches).
+
+## The live forecast log and its scorer
+
+- **The log:** every run of `python scripts/predict.py --now` appends its whole forecast (24 oblasts x H = 1, 3, 6) to `data/predictions/log.csv`, whatever `--oblast` shows: `origin_utc, oblast, h, probability, above_threshold, threshold, model_version, run_time_utc`. Append only: the file is opened for appending, nothing in it is ever rewritten,
+  and nothing is written if an existing file has a different header. `model_version` is `frozen-r13-` plus 12 hex digits of the SHA-256 of the three LightGBM files and `models/frozen.json`. Whether to commit the log is the user's call.
+- **The scorer:** `python scripts/score_predictions.py` (offline, no token; `--write` also writes `results/live_forecast_scores.md`). It scores the forecasts whose horizon has fully passed against the API archive with the same target and metrics as the forward test (within-oblast AUC, Brier, calibration in the large, precision/recall/F1 at the logged
+  decision), next to the three baselines on the same rows. A forecast is scored only if both day files that its window (t, t+H] touches were fetched at least 5 minutes after t+H (from `data/api_archive/log.csv`); the others are counted as not scoreable yet, never guessed. If one origin/oblast/H was logged twice, the first run is scored. The log is only read.
+- **When the sample is too small** (my choice of lines, stated in the output): fewer than 3 scored dates is "far too small to mean anything" (no interval computed); 3 to 13 dates is "too small to mean anything yet" (the day-block interval is shown and is very wide); 14 or more is "a start", still short of the forward test's 41 days. The report always says how many forecasts, origin hours and which dates were scored,
+  and warns if the scored forecasts come from more than one model version.
+- **Tested offline:** a synthetic log with the frozen model's probabilities for every hour of the forward test (2026-09-07 to 10-17) is scored to exactly the forward test's table (60 cells: AUC, Brier, precision, recall, F1 for LightGBM and the three baselines); the edge cases (an origin whose horizon has not passed, one beyond the archive, a duplicate run, a mixed header, an empty log) behave as described.
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -557,6 +595,8 @@ python scripts/sensitivity_aug19.py
 python scripts/forward_test.py --selftest
 python scripts/forward_test.py --diagnose
 python scripts/check_live_replay.py
+python scripts/build_combined.py
+python scripts/check_combined.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -579,6 +619,9 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/check_no_peeking.py`: leakage check: baseline inputs and model features
 - `python scripts/predict.py --at "2026-09-05 14:00" --all`: model at a past hour (needs models/)
 - `python scripts/check_live_replay.py`: the live forecast replayed as of 2026-10-10 12:00 (and 12:37) from an archive cut to what the API would have said then must give the forward test's features and probabilities for that hour exactly (offline; two negative controls)
+- `python scripts/build_combined.py`: official data to 2026-08-28 + the API archive from 08-29 + the Aug 19-20 patch -> data/combined/alerts_combined.csv (not committed) and MANIFEST.md (needs translitua)
+- `python scripts/check_combined.py`: features at the splice against official-only and API-only, continuity, leakage -> results/combined_splice_check.md
+- `python scripts/score_predictions.py`: the live forecasts in data/predictions/log.csv against the API archive (`--write` -> results/live_forecast_scores.md); every `predict.py --now` run appends to that log
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
 - `python scripts/api_check.py`: the Ukraine Alarm API history (data/api_archive/) against our official data, same rules for both -> results/api_check.md (needs translitua)
@@ -660,6 +703,8 @@ data/neighbours.csv  hand-written oblast adjacency (land borders), used by the n
 data/news/           GDELT hourly aggregate + pull record (the news experiment)
 data/source_check/    public posts of the official alert channel for Aug 13–18 (compressed), for results/source_check.md
 data/api_archive/      Ukraine Alarm API history saved by scripts/archive_api.py (the forward test and the API check read it)
+data/predictions/      the live forecast log (data/predictions/log.csv, appended by scripts/predict.py --now)
+data/combined/         the combined official + API dataset (MANIFEST.md committed, the csv is built by scripts/build_combined.py)
 docs/api/             the API's swagger json
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)

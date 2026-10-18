@@ -24,6 +24,8 @@ from src.panel import official_episodes
 from src.targets import make_rows
 
 ARCHIVE = ROOT / "data" / "api_archive" / "date_history"
+PRED_LOG = ROOT / "data" / "predictions" / "log.csv"
+PRED_COLUMNS = ["origin_utc", "oblast", "h", "probability", "above_threshold", "threshold", "model_version", "run_time_utc"]
 GRID = pd.Timedelta(days=29)         # freq4w looks 1-4 weeks back
 HISTORY = pd.Timedelta(days=32)      # known_at keeps alerts that ended up to 32 days before t (hours_since_end is capped at 30 days)
 REFETCH_DAYS = 3                     # today and the two days before are always fetched again
@@ -76,6 +78,37 @@ def stale_open(api_rows, active_ids, refetch_from):
     newest = running.groupby("regionId")["start"].transform("max")
     old = (running["start"] < refetch_from)
     return running[old & ((running["start"] < newest) | ~running["regionId"].isin(set(active_ids)))]
+
+
+def model_version():
+    """A short fingerprint of the frozen models a forecast came from: SHA-256 of the three LightGBM files and frozen.json (thresholds, logistic weights)."""
+    import hashlib
+    h = hashlib.sha256()
+    for name in [f"lgbm_b_start_h{H}.txt" for H in HORIZONS] + ["frozen.json"]:
+        h.update((ROOT / "models" / name).read_bytes())
+    return "frozen-r13-" + h.hexdigest()[:12]
+
+
+def append_prediction_log(origin, oblasts, prob, thr, version, run_time, path=None):
+    """Append this run's forecast (every oblast, every H) to the prediction log. Append only: the file is opened for appending, never rewritten,
+    and nothing is written if an existing file has a different header. Returns the number of rows appended."""
+    import csv
+    path = Path(path or PRED_LOG)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size:
+        with open(path, newline="") as fh:
+            header = next(csv.reader(fh), None)
+        if header != PRED_COLUMNS:
+            raise SystemExit(f"{path} has an unexpected header; nothing was appended.")
+    rows = [[f"{origin:%Y-%m-%dT%H:%M:%SZ}", ob, H, f"{prob[H][i]:.8f}", int(prob[H][i] >= thr[H]), f"{thr[H]:.8f}", version, f"{run_time:%Y-%m-%dT%H:%M:%SZ}"]
+            for i, ob in enumerate(oblasts) for H in HORIZONS]
+    new = not (path.exists() and path.stat().st_size)
+    with open(path, "a", newline="") as fh:
+        w = csv.writer(fh, lineterminator="\n")
+        if new:
+            w.writerow(PRED_COLUMNS)
+        w.writerows(rows)
+    return len(rows)
 
 
 def probabilities(feats, boosters):
@@ -190,6 +223,7 @@ def live_forecast(oblast=None, resolve=None):
     for H in HORIZONS:
         table[f"p{H}"] = prob[H]
         table[f"o{H}"] = prob[H] >= thr[H]
+    n_logged = append_prediction_log(t, list(rows_t["oblast"]), prob, thr, model_version(), now)  # the whole forecast, whatever is shown below
     table = table.sort_values("p1", ascending=False, kind="stable").reset_index(drop=True)
     if want:
         table = table[table["oblast"] == want].reset_index(drop=True)
@@ -227,4 +261,5 @@ def live_forecast(oblast=None, resolve=None):
             row += [f"{r[f'p{H}']:.3f}", "yes" if r[f"o{H}"] else "no"]
         rows_out.append(row)
     print(pd.DataFrame(rows_out, columns=["oblast", "alert now", "1 h", "above", "3 h", "above ", "6 h", "above  "]).to_string(index=False))
+    print(f"\nLogged {n_logged} forecasts (24 oblasts x 3 horizons) to {PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG}.")
     return 0

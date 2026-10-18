@@ -20,3 +20,6 @@ data/source_check/upstream/
 
 # raw answers of scripts/api_probe.py (the Ukraine Alarm API); what to commit is decided by hand
 data/api_raw/
+
+# the combined official + API dataset: rebuilt by scripts/build_combined.py (about 22 MB); data/combined/MANIFEST.md is committed
+data/combined/alerts_combined.csv
