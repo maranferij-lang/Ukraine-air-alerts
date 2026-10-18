@@ -823,7 +823,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/fetch_gdelt_events.py`: re-pull GDELT events, about 9 minutes, needs network -> data/news/
 - `python scripts/fetch_telegram_kpszsu.py`: re-pull t.me/s/kpszsu, about 70 minutes, needs network -> data/telegram/
 - `python scripts/api_probe.py` and `python scripts/archive_api.py`: talk to the Ukraine Alarm API, need your own token in the shell variable `UA_ALARM_TOKEN` (never in a file) -> data/api_raw/ (git-ignored), data/api_archive/
-- `python scripts/predict.py --now`: the live forecast for the last completed hour from the API (tops up data/api_archive/, needs `UA_ALARM_TOKEN` and `pip install translitua`; see the README, "Try it"); `--force` on archive_api.py refetches saved days
+- `python scripts/predict.py --now`: the live forecast for the last completed hour from the API (tops up data/api_archive/, needs `UA_ALARM_TOKEN` and `pip install translitua`; see the README, "How to run"); `--force` on archive_api.py refetches saved days
 
 ## Definitions
 

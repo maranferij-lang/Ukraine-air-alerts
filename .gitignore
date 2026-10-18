@@ -26,3 +26,6 @@ data/combined/alerts_combined.csv
 
 # the forecast map written by scripts/predict.py (--now, --at): scripts/forecast_map.py
 output/
+
+# the full AI conversation log: submitted separately, not part of the repository
+ai-log.txt
