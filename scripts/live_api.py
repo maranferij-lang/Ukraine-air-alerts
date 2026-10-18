@@ -246,6 +246,8 @@ def live_forecast(oblast=None, resolve=None, model=None):
     for H in HORIZONS:
         table[f"p{H}"] = prob[H]
         table[f"o{H}"] = prob[H] >= thr[H]
+    map_rows = [{"oblast": ob, "now": bool(nw), "p": {H: float(prob[H][i]) for H in HORIZONS}}
+                for i, (ob, nw) in enumerate(zip(rows_t["oblast"], feats[1]["now"].to_numpy() > 0))]  # all 24, whatever --oblast shows
     n_logged = append_prediction_log(t, list(rows_t["oblast"]), prob, thr, model_version(model), now)  # the whole forecast, whatever is shown below
     table = table.sort_values("p1", ascending=False, kind="stable").reset_index(drop=True)
     if want:
@@ -264,11 +266,11 @@ def live_forecast(oblast=None, resolve=None, model=None):
              + (f"; its active-alerts list was last updated {max(upd):%Y-%m-%d %H:%M} UTC ({mins(max(upd))})" if upd else "")
              + ". A quiet spell and an API that is behind look the same from here.")
     local = t.tz_convert(KYIV)
+    model_text = ("Model: LightGBM v1, trained on official data to 2026-08-07, not retrained (--model v2 for the newer one)." if model == "v1" else
+                  "Model: LightGBM v2, trained on the combined official + API data (to 2026-10-17 for this forecast), the same features and settings as v1 (--model v1 for the older one).")
     print(textwrap.fill(f"Live forecast from the Ukraine Alarm API for the hour starting {t:%Y-%m-%d %H:%M} UTC ({local:%H:%M} Kyiv time), the last completed hour: "
                         "the chance that a NEW alert starts within the next 1, 3 and 6 hours. Only what the API reported by that hour is used; alerts that started later are not. "
-                        + ("Model: LightGBM v1, trained on official data to 2026-08-07, not retrained (--model v2 for the newer one)." if model == "v1" else
-                           "Model: LightGBM v2, trained on the combined official + API data (to 2026-10-17 for this forecast), the same features and settings as v1 (--model v1 for the older one).")
-                        , 100))
+                        + model_text, 100))
     print()
     print(textwrap.fill(fresh, 100))
     if dropped["district not in our raion list"]:
@@ -287,4 +289,9 @@ def live_forecast(oblast=None, resolve=None, model=None):
         rows_out.append(row)
     print(pd.DataFrame(rows_out, columns=["oblast", "alert now", "1 h", "above", "3 h", "above ", "6 h", "above  "]).to_string(index=False))
     print(f"\nLogged {n_logged} forecasts (24 oblasts x 3 horizons) to {PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG}.")
+    from scripts import forecast_map
+    notes = [fresh] + (["Left out: alerts in districts that are not in our raion list: " + ", ".join(sorted(dropped["district not in our raion list"])) + "."]
+                       if dropped["district not in our raion list"] else []) + ([note] if note else [])
+    forecast_map.write_or_warn(dict(origin=t, made=now, model=model, version=model_version(model), model_text="Live forecast from the Ukraine Alarm API. " + model_text,
+                                    thresholds=thr, notes=notes, rows=map_rows))
     return 0

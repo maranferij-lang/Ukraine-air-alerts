@@ -13,6 +13,8 @@ saved in models/, next to the three baselines and to what actually happened.
 three), refuses and names the missing days if it cannot get a complete history (no scaling, no filling), and prints every oblast's probability for H = 1, 3, 6 and whether
 it is at or above the frozen threshold, sorted by H = 1. Needs your token in the environment variable UA_ALARM_TOKEN and the network; the models are the frozen ones.
 
+Both --at and --now also write output/forecast_map.html (git-ignored): a self-contained map of all oblasts for the three horizons (scripts/forecast_map.py).
+
 The inputs are recomputed from the alert rows as they looked at t: only alerts that had started by
 t, with the end of any alert still running at t unknown (the same cut scripts/check_no_peeking.py
 checks against the full-data features). Times before the end of training (models/info.json) were
@@ -201,6 +203,17 @@ def plain_all(table, when):
             f"Highest within 1 hour: {names}.{outcome}")
 
 
+def write_replay_map(t, round_note, status, map_rows):
+    """output/forecast_map.html for a past hour: the round-13 model (models/), the status lines of this script, the forward-test calibration note."""
+    from scripts import forecast_map
+    from scripts.live_api import calibration_note, model_version, now_utc
+    thr = {H: json.loads((MODELS / "frozen.json").read_text())["thresholds"][str(H)]["lgbm"] for H in HORIZONS}
+    note = calibration_note("v1")
+    notes = ([round_note] if round_note else []) + status + ([note] if note else [])
+    forecast_map.write_or_warn(dict(origin=t, made=now_utc(), model="v1", version=model_version("v1"), thresholds=thr, notes=notes, rows=map_rows,
+                                    model_text="Replay of a past hour from the official data, not a live forecast. Model: LightGBM v1 (round 13), trained on official data to 2026-08-07."))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Probability of a new alert in the next 1, 3 and 6 hours, as the "
                                              "model would have said at a past hour, next to the baselines and "
@@ -240,6 +253,7 @@ def main():
 
     episodes, _ = official_episodes(official, raions=raions)
     table = forecast(t, official, raions, episodes, first, end, boosters, freq)
+    map_rows = [{"oblast": r.oblast, "now": bool(r.now), "p": {H: float(getattr(r, f"model_{H}")) for H in HORIZONS}} for r in table.itertuples()]  # all 24, whatever is chosen
     table = table[table["oblast"].isin(chosen)].reset_index(drop=True)
 
     local = t.tz_convert(KYIV)
@@ -272,6 +286,7 @@ def main():
             out[f"{H}h freq"] = table[f"freq_{H}"].map("{:.3f}".format)
             out[f"{H}h happened"] = table[f"happened_{H}"].map(yn)
         print(out.to_string(index=False))
+        write_replay_map(t, round_note, status_lines(t, first, end, test_start, oblasts[0]), map_rows)
         return
 
     print(f"Under alert at {t:%H:%M} UTC: {yn(r['now'])}.\n")
@@ -289,6 +304,7 @@ def main():
         print(f"\nNext new alert after {t:%H:%M} UTC: {nxt:%Y-%m-%d %H:%M} UTC, {after} later{caveat}.")
     else:
         print("\nNo new alert after this hour before the official data ends.")
+    write_replay_map(t, round_note, status_lines(t, first, end, test_start, oblasts[0]), map_rows)
 
 if __name__ == "__main__":
     if hasattr(signal, "SIGPIPE"):  # `predict.py ... | head` exits quietly instead of a BrokenPipeError

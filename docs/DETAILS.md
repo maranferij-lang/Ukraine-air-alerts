@@ -11,6 +11,7 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [The combined dataset](#the-combined-dataset-official-data--the-api-archive): official data up to 2026-08-28, the API archive after it, the Aug 19-20 patch; every splice point and its checks.
 - [The live forecast log and its scorer](#the-live-forecast-log-and-its-scorer)
 - [v2: LightGBM trained on the combined dataset](#v2-lightgbm-trained-on-the-combined-dataset): the round-16 model, the held-out comparison with frozen v1, the decision rule.
+- [The forecast map](#the-forecast-map): `output/forecast_map.html`, written by `predict.py --now` and `--at`.
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -665,6 +666,19 @@ The production model was refit on every origin whose window closes by the cut (9
 - One 20-day period from one source, with v1 already scored on it; the test days are the most recent ones. v2's training data include the 2026-09-07 to 09-27 days that were v1's forward-test days.
 - The held-out numbers are for the model trained to 09-27; the model `--now` uses is the same model refit on the 20 test days too, which has no held-out score.
 
+## The forecast map
+
+Round 17. `scripts/predict.py --now` and `--at` write `output/forecast_map.html` (git-ignored) after printing their table; `scripts/forecast_map.py` builds it from the same probabilities (all 24 oblasts, whatever `--oblast` shows). One file, no script, no font, no image, no request when it is opened: the outlines are inline SVG, the 1 h / 3 h / 6 h switch is CSS only (radio buttons), and the colours are CSS variables with a light and a dark set (`prefers-color-scheme`). If the page cannot be written, the forecast is still printed and one line on stderr says "Map not written"; a refused forecast writes nothing.
+
+- **On each oblast:** the probability in text (so the colour is never the only carrier), a filled triangle if it is at or above the frozen threshold of the model that made it and an open one if below, and a red "!" badge if an alert is running **at the origin hour** (the model's own "now": at least half of the raions under alert; the origin is the last completed hour, so this can be up to an hour older than the moment the page is made). Hovering gives the three probabilities with their thresholds. Under the map: a table with the same numbers and the words above / below.
+- **Kyiv City** is a small outline inside Kyivska oblast, so it also has a call-out box in the empty corner above the north-west (a leader line to the city), with the same three probabilities, triangles and badge.
+- **Crimea (with Sevastopol) and Luhansk** are grey and hatched, labelled "no data": the alert data do not cover Crimea, and Luhansk is the permanent-alert oblast the model leaves out.
+- **Header:** origin hour in UTC and in Kyiv time, when the page was made, the model (v1 or v2) with the fingerprint that is also in the prediction log, the freshness line (live runs) or the "replay of a past hour" text and the training-period warning (`--at`), and the calibration note of that model. Footer: "A study model, not for safety decisions: follow the official alerts."
+- **Colours:** five probability bins (under 10%, 10 to 25%, 25 to 50%, 50 to 75%, 75% and over), the same for all three horizons so colours compare across the switch. One hue, lightness only: light mode darker = more probable, dark mode lighter = more probable. The ramps are steps of the reference blue ramp, checked by `scripts/check_forecast_map.py` (monotone in OKLab lightness, every step at least 0.09 apart, the faintest fill 2:1 on the page, text at least 4.5:1 on every fill, outlines 3:1) and by the dataviz skill's ordinal validator (all four checks pass in both modes). Lightness alone survives every colour-vision deficiency; the numbers and triangles do not depend on colour at all. On a phone the oblast names are hidden and the percentages enlarged; the table carries the rest.
+- **Outlines:** Natural Earth admin-1 (public domain), simplified, committed as `data/geo/ukraine_oblasts.geojson` with the source commit, its SHA-256, the licence text and every change in `data/geo/README.md` (rebuilt by `scripts/build_geo.py`). Natural Earth's default file lists Crimea and Sevastopol under Russia; they are taken by their Ukrainian ISO codes, as Ukraine's units. The 24 units are matched by ISO 3166-2 code; `python scripts/check_forecast_map.py` checks that match against the feature names, completeness and duplicates, and that our 24 are the 24 units in the alert data.
+- **Checks:** `scripts/check_forecast_map.py` (names and geometry, shared borders identical in both neighbours, the page's colour class / percentage / triangle / badge for every oblast and horizon, self-contained, header facts, colours, and `predict.py --at` writing the page); and, offline against the fake API (a day cut at 2026-10-10 12:37 UTC), `predict.py --now` with the default model, `--model v1`, `--model v2` and `--oblast Kyivska`: every probability, above / below flag and alert state in the page equals the model's own output on the forward-test features, the model fingerprint and times are right, and a refused forecast leaves no page.
+- **Not in the map:** what happened afterwards (the replay shows no outcome), baselines, uncertainty. It is a display of the model's probabilities, which are slightly low on average (the calibration note says by how much).
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -726,6 +740,8 @@ python scripts/check_live_replay.py
 python scripts/build_combined.py
 python scripts/check_combined.py
 python scripts/train_v2.py
+python scripts/build_geo.py PATH_TO_ne_10m_admin_1_states_provinces.geojson
+python scripts/check_forecast_map.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -751,6 +767,8 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/build_combined.py`: official data to 2026-08-28 + the API archive from 08-29 + the Aug 19-20 patch -> data/combined/alerts_combined.csv (not committed) and MANIFEST.md (needs translitua)
 - `python scripts/check_combined.py`: features at the splice against official-only and API-only, continuity, leakage -> results/combined_splice_check.md
 - `python scripts/train_v2.py`: v2 on the combined dataset, compared with frozen v1 on 2026-09-28 to 10-17, the decision rule applied -> results/v2/ and models/v2/ (the design is in PROCESS_LOG.md, Round 16; takes a few minutes)
+- `python scripts/build_geo.py FILE`: Natural Earth admin-1 -> data/geo/ukraine_oblasts.geojson (source, licence and pinned SHA-256 in data/geo/README.md; the output is committed, so this is only needed to rebuild it)
+- `python scripts/check_forecast_map.py`: the oblast name match, the geometry, the page and its colours (offline, seconds)
 - `python scripts/score_predictions.py`: the live forecasts in data/predictions/log.csv against the API archive (`--write` -> results/live_forecast_scores.md); every `predict.py --now` run appends to that log
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
@@ -837,6 +855,8 @@ data/predictions/      the live forecast log (data/predictions/log.csv, appended
 data/combined/         the combined official + API dataset (MANIFEST.md committed, the csv is built by scripts/build_combined.py)
 models/v2/             the v2 production model (written by scripts/train_v2.py, not committed)
 results/v2/            v2 against frozen v1: tables, bootstrap, calibration, decision.json
+data/geo/             oblast outlines for the forecast map (Natural Earth, public domain; README.md has the source and licence)
+output/               forecast_map.html, written by scripts/predict.py (not committed)
 docs/api/             the API's swagger json
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
