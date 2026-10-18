@@ -1817,3 +1817,25 @@ file, never put it in a commit, a log line or an error message; on a failed requ
 
 ### State
 Nothing run on data, no code added; this entry is the only change on `live` so far (uncommitted). Steps 2–4 not started. Waiting for the user.
+
+### Update (same day, later): the token was for a different service; alerts.in.ua dropped
+- **Correction from the user:** the token belongs to the **Ukraine Alarm API** (`api.ukrainealarm.com`), not to alerts.in.ua. So the 401
+  above was the wrong service rejecting a key it never issued, not a bad or expired token. The alerts.in.ua work is dropped (it never got
+  past reading its docs); the entry above stays as the record of it.
+- **New plan (same four steps, adapted):** (1) read the swagger: endpoints, auth format, region ids vs our oblasts, raion level, rate
+  limits, and above all how far back history goes, tested with as few calls as possible; (2) if history reaches late Aug / early Sep, a real
+  consistency check against the official data (same idea as `source_check`), otherwise a sanity check only (alerts and starts per day per
+  oblast vs August) and a plain statement that there is no overlap; (3) forward test of the frozen round-13 models from the first hour with
+  full feature history, reported separately with the source named; (4) `scripts/archive_api.py` saving the API data daily into
+  `data/api_archive/`; (5) `predict.py --now` on live data. Stop and show after step 2. The token is read only from the environment
+  variable `UA_ALARM_TOKEN`, never from a command line, never printed.
+- **Blocked at the start, nothing run on data:**
+  1. `UA_ALARM_TOKEN` is **not set** in this session's environment (checked for presence only; no other variable with a matching name
+     either). Environment variables are read when a session starts, so it needs to be added in the environment's settings and a new
+     session started.
+  2. **The API host is behind a Cloudflare browser challenge from this sandbox.** `https://api.ukrainealarm.com/swagger/index.html`,
+     `/swagger/v1/swagger.json` and an unauthenticated `/api/v3/regions` all answered HTTP 403 with a "Just a moment..." page
+     (`server: cloudflare`), i.e. a bot challenge before any token check. It is not known whether a request that carries a valid key is
+     let through from this IP; the user's own test (200) came from another network. I did not try to get around the challenge.
+- **So the swagger has not been read.** Nothing in this log about the Ukraine Alarm API's endpoints, limits or history depth is known yet;
+  I have not filled the gap from memory.
