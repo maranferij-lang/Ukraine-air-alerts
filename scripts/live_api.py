@@ -191,7 +191,7 @@ def refuse(lines):
     return 1
 
 
-def live_forecast(oblast=None, resolve=None, model=None, lang="en"):
+def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
     """Forecast for the last completed hour from the API. Returns the exit code (0 = forecast printed, 1 = refused). `oblast`: show one oblast only
     (resolve turns the typed name into one of ours)."""
     import textwrap
@@ -298,6 +298,7 @@ def live_forecast(oblast=None, resolve=None, model=None, lang="en"):
     print(T("logged", lang, n=n_logged, path=PRED_LOG.relative_to(ROOT) if PRED_LOG.is_relative_to(ROOT) else PRED_LOG))
     from scripts import forecast_map
     notes = [fresh] + ([left_out] if left_out else []) + ([note] if note else [])
-    forecast_map.write_or_warn(dict(origin=t, made=now, model=model, version=model_version(model), model_text=T("map_live", lang) + model_text,
-                                    thresholds=thr, notes=notes, rows=map_rows, lang=lang))
+    forecast_map.write_or_warn(dict(origin=t, made=now, mode="live", model=model, version=model_version(model), model_text=T("map_live", lang) + model_text,
+                                    thresholds=thr, notes=notes, rows=map_rows, lang=lang,
+                                    history=forecast_map.history_from_log(PRED_LOG, model_version(model))))  # the log already has this run
     return 0

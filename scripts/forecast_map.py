@@ -1,15 +1,17 @@
-"""The forecast map: one self-contained HTML file (output/forecast_map.html, git-ignored) written after every `predict.py --now` and `predict.py --at`.
+"""The forecast map: one self-contained HTML page (output/forecast_map.html, git-ignored) written after every `predict.py --now` and `predict.py --at`.
 
-No script, no font, no image, no request of any kind when the page is opened: the oblast outlines (data/geo/ukraine_oblasts.geojson, Natural Earth, public domain;
-source and licence in data/geo/README.md) are inlined as SVG paths, the 1 h / 3 h / 6 h switch is plain CSS (radio buttons), colours are CSS variables with a light and a
-dark set (prefers-color-scheme). Colour is never the only carrier: every oblast says its probability in text, a triangle for at-or-above the frozen threshold, a "!" badge for
-"under alert at the origin hour"; the same numbers are in a table under the map.
+A dark, map-first page: top bar (what it shows in one sentence, how old the data is, which model, how to read it), the map of the oblasts on the left with a 1 h / 3 h / 6 h
+switch, a side panel on the right (the five most probable oblasts; click an oblast for its big number, the three horizons with the threshold, the alert state and how its
+forecast changed over the last runs of data/predictions/log.csv), a bottom sheet instead of the panel on a phone, and a footer line that always says what this is.
+The page has inline script and style and nothing else: no request of any kind when it is opened. The template is scripts/forecast_map_page.html; this module fills it.
 
-The 24 units we model are matched to the file's features by ISO 3166-2 code (OURS below); scripts/check_forecast_map.py checks that match (code, name, completeness).
-Crimea (with Sevastopol) and Luhansk are not modelled: grey, hatched, "no data".
+Oblast outlines: data/geo/ukraine_oblasts.geojson (Natural Earth, public domain; source and licence in data/geo/README.md), matched to our 24 units by ISO 3166-2 code (OURS
+below; scripts/check_forecast_map.py checks that match). Crimea (with Sevastopol) and Luhansk are not modelled: grey, hatched, "no data".
+Colour is never the only carrier: percentages in text, a triangle for at or above the frozen threshold, a "!" badge for an alert at the origin hour.
 """
 import html
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -18,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
-from src.i18n import T, map_unit_name, short_name, sort_key
+from src.i18n import S, T, full_name, map_unit_name, short_name, sort_key, unit_full_name
 
 GEO = ROOT / "data" / "geo" / "ukraine_oblasts.geojson"
 OUT = ROOT / "output" / "forecast_map.html"
@@ -40,14 +42,18 @@ NO_LABEL = {"UA-40"}                                                           #
 
 EDGES = [0.10, 0.25, 0.50, 0.75]
 BIN_NAMES = T("pg_bins", "en")
-RAMP = ["#61b9ff", "#2f8ad4", "#005da2", "#003465", "#00112b"]  # light mode, light to dark: one blue family (hue 255 to 245 degrees), lightness-monotone, adjacent bins at least 14 apart (OKLab x100), also as seen with red-green colour blindness
-RAMP_DARK = ["#374991", "#5173bc", "#6ea0e8", "#a0cdff", "#edf6ff"]  # dark mode: more probable = lighter, hue 270 to 245 degrees, adjacent bins at least 13 apart; the darkest is 2:1 on the page colour
-MODES = {  # light: more probable = darker
-    "light": dict(surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", grid="#d9d8d3", nd="#dcdbd6", nd_line="#8a8984", ramp=RAMP, alert="#d03b3b", edge="#8a8984"),
-    "dark": dict(surface="#1a1a19", ink="#f0efec", ink2="#c3c2b7", grid="#383835", nd="#363633", nd_line="#7a7973", ramp=RAMP_DARK, alert="#d03b3b", edge="#8d8c86"),
-}
+RAMP = ["#374991", "#5173bc", "#6ea0e8", "#a0cdff", "#edf6ff"]  # more probable = lighter; hue 270 to 245 degrees; neighbours at least 13 apart (OKLab x100), also with red-green colour blindness; the darkest is 2:1 on the map colour
+TOKENS = dict(  # the one dark theme: surfaces, text, accents, status colours, the map's own greys
+    bg="#0b0e13", map="#0e131a", surface="#141a23", surface_2="#1b2330", line="#273141", line_2="#364458",
+    text="#eef2f7", text_2="#b4bdca", text_3="#8793a3", accent="#8ec5ff", focus="#ffd166", alert="#d03b3b", ok="#3ecf8e", warn="#f5a524", bad="#ff6b6b",
+    nd="#2a313c", nd_line="#5b6676", edge="#0e131a", white="#ffffff", hover="#202a39", info_line="#3d5c8f", on_warn="#1a1200",
+    warn_bg="#3a2a05", warn_line="#6b4e0a", warn_text="#ffd98a", alert_bg="#3b1416", alert_line="#7a2a2d", alert_text="#ffb3b3")
 WIDTH, MARGIN, TOP_PAD = 900, 14, 64
 COS_LAT = 0.66
+TEMPLATE = Path(__file__).resolve().with_name("forecast_map_page.html")
+JS_TEXTS = ["ui_ago", "ui_fresh_live", "ui_stale", "ui_top_title", "ui_top_sub", "ui_all", "ui_back", "ui_big_cap", "ui_thr_above", "ui_thr_below", "ui_bars", "ui_bars_legend",
+            "ui_alert_yes", "ui_alert_no", "ui_hist_title", "ui_hist_n", "ui_hist_none", "ui_hist_replay", "ui_hist_thr", "ui_nodata_detail", "ui_rank", "ui_seg_item",
+            "ui_rel_above", "ui_rel_below"]  # the texts the page's script needs, in the page's language
 
 
 def bin_of(p):
@@ -95,63 +101,52 @@ def _path(poly, proj):
     return "".join(parts)
 
 
-def _css(units=()):
-    def block(m):
-        v = MODES[m]
-        lines = [f"--surface:{v['surface']};--ink:{v['ink']};--ink2:{v['ink2']};--grid:{v['grid']};--nd:{v['nd']};--nd-line:{v['nd_line']};--edge:{v['edge']};--alert:{v['alert']};"]
-        lines += [f"--c{k}:{c};--t{k}:{text_on(c)};" for k, c in enumerate(v["ramp"])]
-        return "".join(lines)
-    css = [f":root{{color-scheme:light dark;{block('light')}}}",
-           f"@media (prefers-color-scheme:dark){{:root{{{block('dark')}}}}}",
-           "*{box-sizing:border-box}",
-           "body{margin:0;background:var(--surface);color:var(--ink);font:15px/1.45 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
-           "main{max-width:980px;margin:0 auto;padding:16px}",
-           "h1{font-size:1.3rem;margin:0 0 4px}h2{font-size:1.05rem;margin:22px 0 8px}",
-           ".sub{margin:0 0 6px;color:var(--ink2)}.note{margin:6px 0;color:var(--ink2);font-size:.9rem}.warn{color:var(--ink);font-weight:600}",
-           ".sw input{position:absolute;opacity:0;pointer-events:none}",
-           ".tabs{display:flex;gap:8px;margin:14px 0 8px;flex-wrap:wrap}",
-           ".tabs label{border:2px solid var(--grid);border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:600}",
-           ".stage svg{width:100%;height:auto;display:block}",
-           "svg text{font-family:inherit;text-anchor:middle;pointer-events:none}",
-           ".nm{font-size:9px;font-weight:500}.pc{font-size:12.5px;font-weight:700}.kv{text-anchor:start}",
-           ".u path{stroke:var(--edge);stroke-width:.8;stroke-linejoin:round}.u.nd path{fill:url(#hatch)}",
-           ".u:hover path,.u:focus path{stroke:var(--ink);stroke-width:2.5}.u:focus,.callout:focus{outline:none}",
-           ".panel{border:1px solid var(--grid);border-radius:8px;padding:8px 12px;margin:0 0 8px;min-height:4.9em;font-size:.92rem;font-variant-numeric:tabular-nums}",
-           ".d{display:none}.has-no{display:none}",
-           "@supports not selector(:has(a)){.has-yes{display:none}.has-no{display:inline}}",
-           ".sw:has(.u:hover) .dflt,.sw:has(.u:focus) .dflt,.sw:has(.callout:hover) .dflt,.sw:has(.callout:focus) .dflt{display:none}",
-           ".lab{display:none}.badge circle{fill:var(--alert);stroke:var(--surface);stroke-width:1.5}.badge text{fill:#fff;font-size:11px;font-weight:800}",
-           ".nodata{fill:var(--ink2);font-size:9px}",
-           ".leader{stroke:var(--ink);stroke-width:1.2;fill:none}.callout .box{fill:var(--surface);stroke:var(--ink);stroke-width:1.5}.callout text{fill:var(--ink)}",
-           ".legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:12px 0 4px;font-size:.85rem;color:var(--ink2);align-items:center}",
-           ".chip{display:inline-flex;align-items:center;gap:5px}.chip i{width:22px;height:14px;border-radius:3px;display:inline-block;border:1px solid var(--ink2)}",
-           ".chip b.bd{display:inline-block;background:var(--alert);color:#fff;border-radius:50%;width:16px;height:16px;text-align:center;line-height:16px;font-size:11px}",
-           "table{border-collapse:collapse;width:100%;font-size:.88rem;font-variant-numeric:tabular-nums}th,td{padding:4px 8px;border-bottom:1px solid var(--grid);text-align:right}",
-           "th:first-child,td:first-child{text-align:left}.hot{font-weight:700}",
-           "footer{margin-top:22px;padding-top:10px;border-top:1px solid var(--grid);font-weight:600}",
-           "@media (max-width:640px){.nm{display:none}.pc{font-size:22px}.badge{transform:translate(37px,-26px)}.badge text{font-size:14px}}"]
+def tokens_css():
+    css = "".join(f"--{k.replace('_', '-')}:{v};" for k, v in TOKENS.items())
+    return css + "".join(f"--c{k}:{c};--t{k}:{text_on(c)};" for k, c in enumerate(RAMP))
+
+
+def map_css():
+    css = []
     for h in HORIZONS:
-        css.append(f"#h{h}:checked~.tabs label[for=h{h}]{{background:var(--ink);color:var(--surface);border-color:var(--ink)}}")
-        css.append(f"#h{h}:focus-visible~.tabs label[for=h{h}]{{outline:3px solid var(--alert);outline-offset:2px}}")
-        css.append(f"#h{h}:checked~.stage .l{h}{{display:inline}}")
-        for k in range(len(RAMP)):
-            css.append(f"#h{h}:checked~.stage .p{h}-{k}{{fill:var(--c{k})}}")
-    for iso in units:
-        sel = [f".u[data-iso=\"{iso}\"]:hover", f".u[data-iso=\"{iso}\"]:focus"] + ([".callout:hover", ".callout:focus"] if iso == "UA-30" else [])
-        css.append(",".join(f".sw:has({x}) #d-{iso}" for x in sel) + "{display:block}")
-    for k in range(len(RAMP)):
-        css.append(f".q{k} text{{fill:var(--t{k})}}.q{k} rect{{fill:var(--c{k})}}.sw-{k}{{background:var(--c{k})}}")
+        css.append(f'body[data-h="{h}"] .l{h}{{display:inline}}')
+        css += [f'body[data-h="{h}"] .p{h}-{k}{{fill:var(--c{k})}}' for k in range(len(RAMP))]
+    css += [f".q{k} text{{fill:var(--t{k})}}.q{k} rect{{fill:var(--c{k})}}.sw-{k}{{background:var(--c{k})}}" for k in range(len(RAMP))]
     return "\n".join(css)
 
 
+def history_from_log(path, version, limit=24):
+    """The last `limit` forecasts of one model version from the prediction log (data/predictions/log.csv), one per origin hour (the latest run of that hour), oldest first:
+    {"runs": [{"o": origin as ISO, "lbl": "10-10 15:00" in Kyiv time, "p": {ISO code: {"1": p, "3": p, "6": p}}}]}. An empty list of runs if the log is not there."""
+    import csv
+    path = Path(path)
+    iso_of = {n: iso for n, (iso, _) in OURS.items()}
+    by_origin = {}
+    if path.exists() and path.stat().st_size:
+        with open(path, newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r["model_version"] != version or r["oblast"] not in iso_of:
+                    continue
+                run = by_origin.setdefault(r["origin_utc"], {}).setdefault(r["run_time_utc"], {})
+                run.setdefault(iso_of[r["oblast"]], {})[r["h"]] = float(r["probability"])
+    runs = []
+    for origin in sorted(by_origin):
+        latest = by_origin[origin][max(by_origin[origin])]
+        if len(latest) == len(OURS) and all(len(v) == len(HORIZONS) for v in latest.values()):
+            t = pd.Timestamp(origin)
+            runs.append({"o": origin, "lbl": f"{t.tz_convert('Europe/Kyiv'):%m-%d %H:%M}", "p": latest})
+    return {"runs": runs[-limit:]}
+
+
 def render(payload, features=None):
-    """The whole page as a string. `payload`: origin, made, model, version, model_text, thresholds {H: threshold}, notes [str], rows [{oblast, now, p: {H: probability}}],
-    and optionally lang ("en" or "uk")."""
+    """The whole page as a string. `payload`: origin, made (Timestamps), mode ("live" or "replay"), model, version, model_text, thresholds {H: threshold}, notes [str],
+    rows [{oblast, now, p: {H: probability}}], history (history_from_log or None), lang ("uk" default, or "en")."""
     features = features or load_geo()
-    lang = payload.get("lang", "en")
+    lang = payload.get("lang", "uk")
+    mode = payload.get("mode", "live")
     proj, height = _project(features)
     rows = {r["oblast"]: r for r in payload["rows"]}
-    thr = payload["thresholds"]
+    thr = {int(h): v for h, v in payload["thresholds"].items()}
     origin = pd.Timestamp(payload["origin"])
     kyiv = origin.tz_convert("Europe/Kyiv")
     made = pd.Timestamp(payload["made"])
@@ -163,57 +158,48 @@ def render(payload, features=None):
     def tri(p, h):
         return "\u25b2" if p >= thr[h] else "\u25bd"
 
-    def detail(name, r):
-        """The text of the fixed panel for one unit."""
-        if r is None:
-            return f"<b>{esc(name)}</b>: {T('pg_panel_nodata', lang)}"
-        head = f"<b>{esc(short_name(name, lang))}</b>: " + T("pg_panel_alert" if r["now"] else "pg_panel_calm", lang)
-        items = [T("pg_panel_h", lang, h=h, p=r["p"][h], rel=T("pg_panel_at" if r["p"][h] >= thr[h] else "pg_panel_under", lang), thr=thr[h]) for h in HORIZONS]
-        return head + "<br>" + " · ".join(f"{tri(r['p'][h], h)} {esc(i)}" for h, i in zip(HORIZONS, items))
-
-    body, panels, units = [], [], []
+    units, data_units, units_html = [], [], []
     kyiv_city = None
     ordered = sorted(features, key=lambda f: (f["properties"]["ours"] == "Kyiv City", f["properties"]["iso"]))  # the city last, so it is on top of its oblast
     for f in ordered:
         pr = f["properties"]
-        ours = pr["ours"]
-        iso = pr["iso"]
+        ours, iso = pr["ours"], pr["iso"]
         r = rows.get(ours) if ours else None
         if ours and r is None:
             raise ValueError(f"no forecast row for {ours}")
         name = ours or NOT_MODELLED[iso]
         d = "".join(_path(poly, proj) for poly in f["geometry"]["coordinates"])
         lx, ly = proj(*pr["label"])
-        units.append(iso)
         if r is None:
             shown = map_unit_name(name, lang)
-            panels.append(f'<div class="d" id="d-{iso}">{detail(shown, None)}</div>')
+            data_units.append(dict(iso=iso, name=shown, full=unit_full_name(name, lang), modelled=False, now=False, p={}, pc={}))
             lab = "" if iso in NO_LABEL else (f'<text class="nodata" x="{lx:.1f}" y="{ly - 3:.1f}">{esc(shown)}</text>'
                                               f'<text class="nodata" x="{lx:.1f}" y="{ly + 9:.1f}">{T("pg_nodata", lang)}</text>')
-            body.append(f'<g class="u nd" data-iso="{iso}" tabindex="0"><path d="{d}"/>{lab}</g>')
+            units_html.append(f'<g class="u nd" data-iso="{iso}" role="button" tabindex="0" aria-pressed="false" aria-label="{esc(shown)}"><path id="p-{iso}" d="{d}"/>{lab}</g>')
             continue
-        panels.append(f'<div class="d" id="d-{iso}">{detail(ours, r)}</div>')
+        shown = short_name(ours, lang)
+        data_units.append(dict(iso=iso, name=shown, full=full_name(ours, lang), modelled=True, now=bool(r["now"]),
+                               p={str(h): r["p"][h] for h in HORIZONS}, pc={str(h): pct(r["p"][h]) for h in HORIZONS}))
         classes = " ".join(f"p{h}-{bin_of(r['p'][h])}" for h in HORIZONS)
         labs = []
         for h in HORIZONS:
             if ours == "Kyiv City":
                 continue
-            nm = short_name(ours, lang)
-            two = nm.split("-", 1)
-            lines = [two[0] + "-", two[1]] if len(nm) > 11 and len(two) == 2 else [nm]
+            two = shown.split("-", 1)
+            lines = [two[0] + "-", two[1]] if len(shown) > 11 and len(two) == 2 else [shown]
             tspans = "".join(f'<text class="nm" x="{lx:.1f}" y="{ly - 8 + 9 * i - 9 * (len(lines) - 1):.1f}">{esc(t)}</text>' for i, t in enumerate(lines))
             labs.append(f'<g class="lab l{h} q{bin_of(r["p"][h])}">{tspans}<text class="pc" x="{lx:.1f}" y="{ly + 6:.1f}">{pct(r["p"][h])} {tri(r["p"][h], h)}</text></g>')
         badge = ""
         if r["now"] and ours != "Kyiv City":
-            nm = short_name(ours, lang)
-            widest = max(len(t) for t in (nm.split("-", 1) if len(nm) > 11 and "-" in nm else [nm]))
+            widest = max(len(t) for t in (shown.split("-", 1) if len(shown) > 11 and "-" in shown else [shown]))
             bx_ = lx - max(20, widest * 2.7) - 11  # left of the wider of the name and the percentage line, so the badge never sits on a letter
             badge = f'<g class="badge"><circle cx="{bx_:.1f}" cy="{ly + 2:.1f}" r="8"/><text x="{bx_:.1f}" y="{ly + 6:.1f}">!</text></g>'
-        body.append(f'<g class="u" data-oblast="{esc(ours)}" data-iso="{iso}" tabindex="0"><path class="{classes}" d="{d}"/>{"".join(labs)}{badge}</g>')
+        units_html.append(f'<g class="u" data-oblast="{esc(ours)}" data-iso="{iso}" role="button" tabindex="0" aria-pressed="false" aria-label="{esc(shown)}: {pct(r["p"][1])}">'
+                          f'<path id="p-{iso}" class="{classes}" d="{d}"/>{"".join(labs)}{badge}</g>')
         if ours == "Kyiv City":
             kyiv_city = (r, proj(*pr["label"]))
 
-    # Kyiv City: the outline itself is small, so a call-out in the empty corner above the north-west of the country repeats its numbers
+    # Kyiv City: the outline itself is small, so a call-out in the empty corner above the north-west of the country repeats its numbers (it can be clicked, like the outline)
     callout = ""
     if kyiv_city:
         r, (cx, cy) = kyiv_city
@@ -223,61 +209,49 @@ def render(payload, features=None):
             labs.append(f'<g class="lab l{h} q{bin_of(r["p"][h])}"><rect x="{bx + 6}" y="{by + 24}" width="{bw - 12}" height="22" rx="4"/>'
                         f'<text class="pc kv" x="{bx + 12}" y="{by + 40}">{pct(r["p"][h])} {tri(r["p"][h], h)}</text></g>')
         bad = f'<g class="badge"><circle cx="{bx + bw - 14}" cy="{by + 14}" r="8"/><text x="{bx + bw - 14}" y="{by + 18}">!</text></g>' if r["now"] else ""
-        callout = (f'<g class="callout" data-iso="UA-30" tabindex="0"><path class="leader" d="M{cx:.1f},{cy:.1f}L{bx + bw / 2:.1f},{by + bh:.1f}"/>'
+        callout = (f'<g class="callout" data-iso="UA-30" role="button" tabindex="0" aria-label="{esc(short_name("Kyiv City", lang))}"><path class="leader" d="M{cx:.1f},{cy:.1f}L{bx + bw / 2:.1f},{by + bh:.1f}"/>'
                    f'<rect class="box" x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="6"/>'
                    f'<text class="kv" x="{bx + 10}" y="{by + 17}" style="font-size:12px;font-weight:700">{esc(short_name("Kyiv City", lang))}</text>{bad}'
-                   f'{"".join(labs)}<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" style="fill:var(--ink)"/></g>')
+                   f'{"".join(labs)}<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" style="fill:var(--text)"/></g>')
 
+    data_units.sort(key=lambda u: (not u["modelled"], sort_key(u["name"], lang)))
     bins = T("pg_bins", lang)
-    legend = "".join(f'<span class="chip"><i class="sw-{k}"></i>{esc(bins[k])}</span>' for k in range(len(RAMP)))
-    legend2 = (f'<span class="chip"><i style="background:var(--nd)"></i>{T("pg_lg_nd", lang)}</span>'
-               f'<span class="chip"><b>\u25b2</b> {T("pg_lg_above", lang)}</span><span class="chip"><b>\u25bd</b> {T("pg_lg_below", lang)}</span>'
-               f'<span class="chip"><b class="bd">!</b> {T("pg_lg_alert", lang)}</span>')
-    thr_txt = ", ".join(T("pg_thr_item", lang, h=h, v=thr[h]) for h in HORIZONS)
-
+    legend = ('<span class="scale">' + "".join(f'<span class="chip"><i class="sw-{k}"></i>{esc(bins[k])}</span>' for k in range(len(RAMP))) + "</span>"
+              f'<span class="chip"><i style="background:var(--nd)"></i>{T("pg_lg_nd", lang)}</span>'
+              f'<span class="chip"><b>\u25b2</b> {T("pg_lg_above", lang)}</span><span class="chip"><b>\u25bd</b> {T("pg_lg_below", lang)}</span>'
+              f'<span class="chip"><b class="bd">!</b> {T("pg_lg_alert", lang)}</span>')
+    seg = "".join(f'<button type="button" role="radio" data-h="{h}" aria-checked="{"true" if h == 1 else "false"}" tabindex="{0 if h == 1 else -1}">{T("ui_seg_item", lang, H=h)}</button>' for h in HORIZONS)
+    thr_txt = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=thr[h]) for h in HORIZONS))
+    warn = tuple(T("pg_warn_prefixes", lang)) + ("!",)
+    notes = list(payload["notes"])
+    banner = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in notes if n.startswith(warn))
+    banner = f'<div class="banner" role="status">{banner}</div>' if banner else ""
+    model_pill = "<span>" + esc(T("ui_model", lang, model=payload["model"])) + f'<span class="fp"> \u00b7 {esc(payload["version"])}</span></span>'
+    model_full = T("ui_model", lang, model=f"{payload['model']} \u00b7 {payload['version']}")
+    how = "".join(f"<div><dt>{esc(h)}</dt><dd>{esc(t)}</dd></div>" for h, t in T("ui_how_items", lang))
+    about = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in [model_full, payload["model_text"]] + notes + [thr_txt])
+    th = T("pg_th", lang)
     tr = []
     for name in sorted(rows, key=lambda n: sort_key(short_name(n, lang), lang)):
         r = rows[name]
-        cells = "".join(f'<td class="{"hot" if r["p"][h] >= thr[h] else ""}">{r["p"][h]:.3f} {T("pg_above" if r["p"][h] >= thr[h] else "pg_below", lang)}</td>' for h in HORIZONS)
+        cells = "".join(f'<td>{r["p"][h]:.3f} {T("pg_above" if r["p"][h] >= thr[h] else "pg_below", lang)}</td>' for h in HORIZONS)
         tr.append(f"<tr><td>{esc(short_name(name, lang))}</td><td>{T('pg_alert_yes' if r['now'] else 'pg_alert_no', lang)}</td>{cells}</tr>")
-
-    warn = tuple(T("pg_warn_prefixes", lang)) + ("!",)
-    notes = "".join(f'<p class="note{" warn" if n.startswith(warn) else ""}">{esc(n.lstrip("!"))}</p>' for n in payload["notes"])
-    th = T("pg_th", lang)
-    tabs = "".join(f'<label for="h{h}">{T("pg_tab", lang, H=h, unit=T("pg_unit1" if h == 1 else "pg_unit3", lang))}</label>' for h in HORIZONS)
-    page = f"""<!doctype html>
-<html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{T('pg_title', lang)}</title>
-<style>
-{_css(units)}
-</style></head>
-<body><main>
-<h1>{T('pg_h1', lang)}</h1>
-<p class="sub">{T('pg_sub', lang, t=origin, hm=f"{kyiv:%H:%M}", made=made, model=esc(payload['model']), version=esc(payload['version']))}</p>
-<p class="note">{T('pg_note', lang, model_text=esc(payload['model_text']))}</p>
-{notes}
-<section class="sw">
-<input type="radio" name="h" id="h1" checked><input type="radio" name="h" id="h3"><input type="radio" name="h" id="h6">
-<div class="tabs">{tabs}</div>
-<div class="panel" aria-live="polite"><div class="dflt"><span class="has-yes">{T('pg_panel_default', lang)}</span><span class="has-no">{T('pg_panel_nohas', lang)}</span></div>
-{chr(10).join(panels)}
-</div>
-<div class="stage"><svg viewBox="0 0 {WIDTH} {height}" role="img" aria-label="{esc(T('pg_aria', lang))}">
-<defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" style="fill:var(--nd)"/><line x1="0" y1="0" x2="0" y2="7" style="stroke:var(--nd-line);stroke-width:1.6"/></pattern></defs>
-{chr(10).join(body)}
-{callout}
-</svg></div>
-<div class="legend">{legend}</div>
-<div class="legend">{legend2}</div>
-<p class="note">{T('pg_thr', lang, thr=thr_txt)}</p>
-</section>
-<h2>{T('pg_h2', lang)}</h2>
-<table class="tbl"><thead><tr>{"".join(f"<th>{esc(c)}</th>" for c in th)}</tr></thead><tbody>
-{chr(10).join(tr)}
-</tbody></table>
-<footer>{T('pg_footer', lang)}</footer>
-</main></body></html>
-"""
+    table = (f"<h2>{T('pg_h2', lang)}</h2><table><thead><tr>{''.join(f'<th>{esc(c)}</th>' for c in th)}</tr></thead><tbody>{''.join(tr)}</tbody></table>")
+    history = payload.get("history")
+    data = dict(lang=lang, h=1, mode=mode, made=f"{made.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}", origin=f"{origin.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}",
+                thr={str(h): thr[h] for h in HORIZONS}, edges=EDGES, units=data_units, history=history, thrText=thr_txt,
+                S={k: S[k][lang] for k in JS_TEXTS})
+    data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    page = TEMPLATE.read_text(encoding="utf-8")
+    fills = {"{{TOKENS_CSS}}": tokens_css(), "{{MAP_CSS}}": map_css(), "{{LANG}}": lang, "{{H0}}": "1",
+             "{{FRESH_CLASS}}": "", "{{FRESH_STATIC}}": esc(T("ui_replay_pill", lang) if mode == "replay" else T("ui_fresh_static", lang, made=made)),
+             "{{MODEL_TITLE}}": esc(payload["model_text"]), "{{MODEL_PILL}}": model_pill, "{{ORIGIN_PILL}}": esc(T("ui_origin", lang, hm=f"{kyiv:%H:%M}", t=origin)),
+             "{{BANNER}}": banner, "{{SEG}}": seg, "{{W}}": str(WIDTH), "{{HT}}": str(height), "{{UNITS}}": "\n".join(units_html), "{{CALLOUT}}": callout,
+             "{{LEGEND}}": legend, "{{HOW}}": how, "{{ABOUT}}": about, "{{NOSCRIPT_TABLE}}": table}
+    for k, v in fills.items():
+        page = page.replace(k, v)
+    page = re.sub(r"\[\[(\w+)\]\]", lambda m: esc(T(m.group(1), lang)), page)
+    page = page.replace("{{DATA_JSON}}", data_json)  # last: the data must not be searched for placeholders
     return page
 
 
@@ -294,8 +268,8 @@ def write_or_warn(payload, path=None):
     try:
         p = write(payload, path)
         shown = p.relative_to(ROOT) if p.is_relative_to(ROOT) else p
-        print(T("map_written", payload.get("lang", "en"), path=shown))
+        print(T("map_written", payload.get("lang", "uk"), path=shown))
         return p
     except Exception as e:  # noqa: BLE001
-        print(T("map_not_written", payload.get("lang", "en"), err=f"{type(e).__name__}: {e}"), file=sys.stderr)
+        print(T("map_not_written", payload.get("lang", "uk"), err=f"{type(e).__name__}: {e}"), file=sys.stderr)
         return None

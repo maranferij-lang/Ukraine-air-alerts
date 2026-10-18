@@ -4,7 +4,7 @@
     python scripts/predict.py --at "2026-09-05 17:00+03:00" --all
     python scripts/predict.py --now                      (live, from the Ukraine Alarm API; needs UA_ALARM_TOKEN)
     python scripts/predict.py --now --oblast Kharkivska
-    python scripts/predict.py --now --lang uk            (the output and the map in Ukrainian; English is the default)
+    python scripts/predict.py --now --lang en            (the output and the map in English; Ukrainian is the default)
 
 For origin t (a whole hour, UTC unless the time carries an offset) prints the probability that a new
 alert starts in (t, t+H] for H = 1, 3, 6 (target (b)), from the LightGBM models scripts/evaluate.py
@@ -197,14 +197,14 @@ def plain_all(table, when, lang="en"):
     return T("all_text", lang, n=len(table), when=when, names=names, outcome=outcome)
 
 
-def write_replay_map(t, round_note, status, map_rows, lang="en"):
+def write_replay_map(t, round_note, status, map_rows, lang="uk"):
     """output/forecast_map.html for a past hour: the round-13 model (models/), the status lines of this script, the forward-test calibration note."""
     from scripts import forecast_map
     from scripts.live_api import calibration_note, model_version, now_utc
     thr = {H: json.loads((MODELS / "frozen.json").read_text())["thresholds"][str(H)]["lgbm"] for H in HORIZONS}
     note = calibration_note("v1", lang)
     notes = ([round_note] if round_note else []) + status + ([note] if note else [])
-    forecast_map.write_or_warn(dict(origin=t, made=now_utc(), model="v1", version=model_version("v1"), thresholds=thr, notes=notes, rows=map_rows, lang=lang,
+    forecast_map.write_or_warn(dict(origin=t, made=now_utc(), mode="replay", history=None, model="v1", version=model_version("v1"), thresholds=thr, notes=notes, rows=map_rows, lang=lang,
                                     model_text=T("map_replay", lang)))
 
 
@@ -217,7 +217,7 @@ def main():
                                    '"2026-09-05 17:00+03:00"; rounded down to the hour')
     when.add_argument("--now", action="store_true", help="live forecast for the last completed hour from the Ukraine Alarm API (needs UA_ALARM_TOKEN in "
                                                           "the environment); every oblast unless --oblast is given")
-    ap.add_argument("--lang", choices=["en", "uk"], default="en", help="language of the output and of the map: en (default) or uk (Ukrainian); error messages stay English")
+    ap.add_argument("--lang", choices=["en", "uk"], default="uk", help="language of the output and of the map: uk (Ukrainian, the default) or en (English); error messages stay English")
     ap.add_argument("--model", choices=["v1", "v2"], help="with --now: which model to use (default: the one the v2 decision rule chose, results/v2/decision.json)")
     who = ap.add_mutually_exclusive_group()
     who.add_argument("--oblast", help='oblast name or a unique start of it, e.g. "Kyivska", "Kyiv City", "Lviv"')
