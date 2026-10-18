@@ -60,6 +60,17 @@ def platt_apply(p, w):
     return 1 / (1 + np.exp(-(w[0] * z + w[1])))
 
 
+def rounded(obj, ndigits):
+    """Every float in a nested dict/list rounded (round() is correctly rounded, so the same value gives the same text on every machine)."""
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: rounded(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [rounded(v, ndigits) for v in obj]
+    return obj
+
+
 def main():
     ap = argparse.ArgumentParser(description="Train v2 on the combined dataset and compare it with frozen v1 (design: PROCESS_LOG.md, Round 16).")
     ap.add_argument("--refit", action="store_true", help="write the production refit to models/v2/ even if the decision rule keeps v1")
@@ -142,7 +153,7 @@ def main():
                 "brier_v2": {str(H): br[(H, "v2")] for H in HORIZONS}, "brier_v1": {str(H): br[(H, "v1")] for H in HORIZONS}, "brier_better_at_h1": rule_brier,
                 "tree_counts": {str(H): trees_by_h[H] for H in HORIZONS}, "thresholds": {str(H): thr_v2[H] for H in HORIZONS}}
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "decision.json").write_text(json.dumps(decision, indent=1) + "\n")
+    (OUT / "decision.json").write_text(json.dumps(rounded(decision, 10), indent=1) + "\n")  # the rule above ran on the full-precision values; the file keeps 10 decimals so it is the same on arm and x86
 
     T, C, B, R = pd.DataFrame(table), pd.DataFrame(cal), pd.DataFrame(boot_rows), pd.concat(rel)
     T.to_csv(OUT / "test_table.csv", index=False, float_format="%.4f")
