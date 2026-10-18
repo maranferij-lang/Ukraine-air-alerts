@@ -1942,3 +1942,39 @@ have a file, outside the official outage and before the official trusted end. Wr
 **Next, for the user to run:** a backfill into `data/api_archive/` (resumable) and commit it, then the check over the full late-Aug / early-Sep
 window (and, if we go on, the forward test from Sep 7). Nothing else was run against the real API by me. Step 3 (forward test) is not started:
 the user asked to stop after step 2.
+
+### Update (2026-10-18, later): the full consistency check, API vs official (step 2 done)
+**Input:** the user's backfill (`data/api_archive/`, commit df16ea6): 74 daily files 2026-08-06 to 2026-10-18, every call HTTP 200, 8.8 MB, 84 requests
+with 10 HTTP 429 (the client's pace had risen to 60 s by the end). Run: `python scripts/api_check.py` (offline, 4 s) -> `results/api_check.md`.
+
+**One mapping fix found by the check:** the API calls one raion "Шептицький район" (19 rows dropped as "not in our raion list"). Our list has 7 raions
+for Lviv oblast, six of which appear in the API under the same name; the seventh, "Chervonohradskyi raion", never appeared, and Sheptytskyi is the former
+Chervonohrad raion. Added `RAION_ALIASES = {"Sheptytskyi raion": "Chervonohradskyi raion"}` (`src/ukrainealarm.py`), applied in `api_check.py`.
+It changes one row's match and none of the oblast-hour numbers. This is an inference from the lists (plus the known renaming), not something the API states.
+
+**Result.** Compared hours: the 26 UTC days with a file inside the official data's trusted range (Aug 6-28 and Sep 3-5; the official outage
+[Aug 29, Sep 3) and everything from Sep 6 00:00 are excluded): 624 hours x 24 oblasts = **14,976 oblast-hours**.
+| | |
+|---|---|
+| same "under alert" | **14,942 of 14,976 (99.8%)**: official only 0, API only 34 |
+| same "a new alert starts in the hour" | **14,954 of 14,976 (99.9%)**: official only 7, API only 15, both 1,824 |
+| oblast episodes, official / API | 1,882 / 1,890; official starts matched by an API start within 1 min 1,866, 5 min 1,875, 1 h 1,882 (all) |
+| raion alert rows, official / API | 9,360 / 9,395; official rows with an API row of the same raion starting within 5 s 9,263, within 60 s 9,301; of those, end within 60 s: 9,218 of 9,301 |
+- **The disagreement sits on 3 days.** Aug 19 and Aug 20 hold 33 of the 34 "under alert" differences and 20 of the 22 start differences; Sep 5 holds
+  the other 1 and 2. Outside Aug 19-20 (1,152 oblast-hours removed): 13,823 of 13,824 agree on "under alert" and 13,822 of 13,824 on starts.
+- **Aug 19-20, what is different** (looked at, not explained): from about 20:52 UTC on Aug 19 the API has an alert in all 5 raions of Chernihivska oblast
+  (to 08:26-09:52 on Aug 20, one raion to 18:49) and in 7 raions of Kyivska oblast (to 05:37-10:31), plus Mykolaiv, Dnipropetrovsk, Cherkasy and
+  others for shorter times. **Our official data has no Chernihiv or Kyivska oblast alert at all in that period** (0 minutes active, 14 and 11 hours),
+  and no row starting in the 20:xx UTC hour of Aug 19 (0 rows, against 58 in the API; 46 official rows start in the 21:xx hour). So it looks like a gap
+  in the official feed (or its parsing) of about an hour at the start of that wave, and a missing wave for those two oblasts. I do not know which.
+  **This is inside our old test window** (Aug 19-20, 25 oblast-hours where the official target says "no alert" and the API says "alert"); the old test
+  is not changed and this is not fixed by editing data (`data/raw` stays as pulled).
+- **The official outage window:** the API days for [Aug 29, Sep 3) give 521 oblast episodes starting in it, in 22 oblasts: the API has data where the
+  official feed has none. Not compared with anything.
+- **Caveats (as before):** the two sources are probably not independent (the API says it takes the official channel among its sources), so this shows
+  that our rules produce the same oblast series from both and that the API is a usable substitute, not that either one is right about reality. The
+  API rows have `isContinue = false` everywhere in this period; 80 rows without an end and 312 non-AIR rows were dropped (as the report lists).
+- **Added to the report:** a table of the days with the most disagreeing oblast-hours (so the Aug 19-20 cluster is visible in the file).
+
+**Decision for the user:** go on to the forward test (step 3) or not; and whether the Aug 19-20 official gap should be recorded in the README / log as a
+known limitation of the old test (its effect is small: 34 of 14,976 hours, one event), which I have not touched.

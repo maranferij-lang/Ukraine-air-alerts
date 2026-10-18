@@ -27,7 +27,7 @@ import pandas as pd
 
 from src.load import OFFICIAL_OUTAGES, PERMANENT_ALERT_OBLASTS, data_end, load_official
 from src.panel import hourly_panel, official_episodes, raion_list
-from src.ukrainealarm import our_name
+from src.ukrainealarm import RAION_ALIASES, our_name
 
 DEFAULT_DIR = ROOT / "data" / "api_archive" / "date_history"
 OUT = ROOT / "results" / "api_check.md"
@@ -74,6 +74,7 @@ def to_official_rows(api, raions):
         name = " ".join(r.name.split())
         if name.endswith("район"):
             raion = translit(name, UkrainianKMU)
+            raion = RAION_ALIASES.get(raion, raion)
             if raion in raion_oblast.index:
                 rows.append((raion_oblast[raion], raion, "", "raion", r.start, r.end))
             else:
@@ -150,6 +151,11 @@ def main():
         hours=("hour", "size"), active_disagree=("act_dis", "sum"), official_only=("off_only", "sum"), api_only=("api_only", "sum"),
         start_disagree=("st_dis", "sum"))
 
+    dd = j.assign(day=j["hour"].dt.strftime("%Y-%m-%d"), a=act_dis, s=st_dis)
+    dd = dd[dd["a"] | dd["s"]]
+    by_day = (dd.groupby("day").agg(a=("a", "sum"), s=("s", "sum"), o=("oblast", "nunique"))
+              .sort_values(["a", "s"], ascending=False).head(5)) if len(dd) else pd.DataFrame(columns=["a", "s", "o"])
+
     # alert rows (raion level) and oblast episodes, for alerts that start on compared days
     def in_scope(df):
         s = df["start"]
@@ -186,7 +192,7 @@ def main():
          + ", ".join(f"[{a}, {b})" for a, b in OFFICIAL_OUTAGES) + f" and everything from {end_ok:%Y-%m-%d %H:%M} UTC (the official data's trusted end): "
          f"{len(ok_hours)} hours x {len(oblasts)} oblasts = {N} oblast-hours.",
          "- Rules applied to the API alerts: only alertType `AIR`; district (`... район`) -> raion row (name transliterated, must be one of our "
-         f"{len(raions)} raions); `м. Київ` and `... область` -> oblast-level row; hromada-level rows are dropped, as `src/panel.py` does; "
+         f"{len(raions)} raions; one known rename: Sheptytskyi = our Chervonohradskyi); `м. Київ` and `... область` -> oblast-level row; hromada-level rows are dropped, as `src/panel.py` does; "
          "oblast under alert when at least half of its raions are (the same fixed raion list); restarts within 5 minutes joined. "
          "The official side goes through the same code.", "",
          "## What the API rows were turned into",
@@ -207,6 +213,9 @@ def main():
          "Per oblast:", "",
          "| oblast | hours | \"under alert\" differs | official only | API only | \"new alert starts\" differs |", "|---|---|---|---|---|---|",
          *[f"| {o} | {int(r.hours)} | {int(r.active_disagree)} | {int(r.official_only)} | {int(r.api_only)} | {int(r.start_disagree)} |" for o, r in per.iterrows()], "",
+         "Days with the most disagreeing oblast-hours (top 5):", "",
+         "| day (UTC) | \"under alert\" differs | \"new alert starts\" differs | oblasts involved |", "|---|---|---|---|",
+         *[f"| {d} | {int(r.a)} | {int(r.s)} | {int(r.o)} |" for d, r in by_day.iterrows()], "",
          "## Oblast episodes (alerts after the half-of-raions rule and the 5-minute join)", "",
          "| | official episodes | API episodes |", "|---|---|---|",
          f"| starting on the compared hours | {len(eo)} | {len(ea)} |",

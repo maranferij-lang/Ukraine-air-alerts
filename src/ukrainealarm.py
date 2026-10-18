@@ -37,6 +37,11 @@ UK_TO_OURS = {
 }
 
 
+# Raion names the API writes differently from our (older) official feed. Sheptytskyi raion (Lviv oblast) is the former Chervonohradskyi raion:
+# our list has 7 raions for Lviv oblast, six of them appear in the API under the same name, and this is the seventh.
+RAION_ALIASES = {"Sheptytskyi raion": "Chervonohradskyi raion"}
+
+
 def our_name(uk_name):
     """Our oblast name for an API state name, or None (Crimea, Sevastopol, or a spelling we did not expect)."""
     return UK_TO_OURS.get(" ".join(str(uk_name).lower().split()))
