@@ -2049,3 +2049,41 @@ frozen thresholds; nothing is refitted or retuned; the Jul 1 - Aug 5 backfill is
   resolution, residual; and the squared bias is shown next to them. How much of the change is the base-rate level is read off the uncertainty term (and, for the model itself, the bias).
 - The same table for train frequency, so the model's Brier change can be read against a predictor that does not adapt.
 - Not done to "fix" anything: no recalibration, no threshold moved, no refit.
+
+### Update (2026-10-18, night): the forward test, scored (main: no outage mask; secondary: mask on)
+Run after the decision above was logged and committed (ec944ba): `python scripts/forward_test.py --score` (the self-test passed again just before). The result is deterministic (a second run gave the same
+table). Files: `results/forward_api/` (`forward_table.md/.csv`, `bootstrap.md`, `calibration.md`, `secondary_mask_on.md`, `diagnostics.md`); a README section and a DETAILS section.
+**Source: the Ukraine Alarm API for every feature and outcome; frozen round-13 models and thresholds; 41 days (2026-09-07 to 10-17), 23,616 oblast-hours per horizon; target (b) only.**
+
+**Main result, within-oblast AUC (95% day-block bootstrap interval) / Brier, no mask:**
+| H | LightGBM | logistic | train frequency | same hour yesterday | same as now | rolling 4-week freq. |
+|---|---|---|---|---|---|---|
+| 1 | 0.708 (0.677-0.731) / 0.119 | 0.538 / 0.136 | 0.531 / 0.152 | 0.515 / 0.255 | 0.407 / 0.400 | 0.519 / 0.160 |
+| 3 | 0.662 (0.622-0.691) / 0.167 | 0.561 / 0.183 | 0.522 / 0.259 | 0.532 / 0.323 | 0.459 / 0.429 | 0.536 / 0.216 |
+| 6 | 0.654 (0.610-0.689) / 0.143 | 0.573 / 0.152 | 0.519 / 0.256 | 0.536 / 0.264 | 0.475 / 0.445 | 0.528 / 0.189 |
+- LightGBM is ahead of every other predictor on AUC and on Brier at every horizon, and in every day-resampling the difference has the same sign: all 15 AUC-difference intervals lie above zero and all 15 Brier-difference intervals
+  below zero (for example against train frequency: AUC +0.177 [0.140, 0.210] at H=1, +0.135 [0.090, 0.170] at H=6). The old test's "not established" for the H=6 ranking edge over train frequency stands for that test; here the
+  interval excludes zero. This is one 41-day period from one source, so it is one more piece of evidence, not a verdict.
+- Thresholded metrics at the frozen thresholds (in `forward_table.md`): LightGBM precision/recall/F1 0.419/0.669/0.515 (H=1), 0.613/0.877/0.721 (H=3), 0.750/0.915/0.824 (H=6).
+
+**Calibration in the large (requested), mean predicted against observed:** LightGBM 0.1516 vs 0.1796 (H=1), 0.3681 vs 0.4143 (H=3), 0.5315 vs 0.5711 (H=6): it predicts low by 0.028 / 0.046 / 0.040, and the squared
+bias is 0.7% / 1.3% / 1.1% of its Brier. Train frequency is much further off (0.0857 vs 0.1796, 0.2258 vs 0.4143, 0.3691 vs 0.5711: bias^2 is 5.8% / 13.7% / 15.9% of its Brier), as it cannot follow the level.
+**How much of the Brier change is the base rate** (old test re-scored with the same frozen artifacts -> forward; terms generated in `calibration.md`):
+- H=1: LightGBM Brier 0.0875 -> 0.1193 (+0.0318). The higher base rate alone raises the uncertainty term by +0.0407, i.e. **more than the whole change** (128%); the model's better separation (resolution +0.0097) offsets part of it;
+  calibration-in-the-large (squared bias 0.0001 -> 0.0008) is 2% of the change.
+- H=3: 0.1446 -> 0.1666 (+0.0220); uncertainty +0.0344 (156%), resolution +0.0144 offsets; squared bias 0.0003 -> 0.0021, 8% of the change.
+- H=6: 0.1398 -> 0.1428 (+0.0030); the uncertainty term does not move (0.4300 and 0.5711 are symmetric around 0.5), so the base rate's direct effect is nil; the change is calibration-in-the-large (squared bias 0.0001 -> 0.0016,
+  49% of the change) plus slightly lower resolution (-0.0015).
+- Train frequency over the same change: Brier +0.0503 / +0.0817 / +0.0785, mostly reliability (squared bias +0.0076 / +0.0307 / +0.0372).
+- So the Brier score is worse than in the old test mainly because the period is busier (a harder forecasting problem for anyone), while the model's skill relative to the simple rules is higher here, not lower. Nothing was recalibrated.
+
+**Secondary, not the result: the official outage mask switched on** (`secondary_mask_on.md`): LightGBM within-oblast AUC changes by +0.0003 / -0.0006 / -0.0020 and Brier by +0.0001 / +0.0003 / +0.0006 at H = 1 / 3 / 6; the logistic AUC by
++0.0010 / +0.0018 / +0.0022; the rolling 4-week frequency baseline's Brier by +0.0040 / +0.0082 / +0.0102 (it is the predictor that depends most on the lagged windows); the three baselines that do not use these features are identical.
+The mask choice does not change any conclusion.
+
+**README and DETAILS:** the README gets a short "Forward test on live data (a separate test)" block under the results (numbers copied from the generated tables; links and anchors checked, 0 problems; no code block has `#` or a
+backtick), its status line now says main is final (round 13) and this branch adds round 14; DETAILS gets a full section (frozen artifacts, rows, checks, results, intervals, calibration and the Brier split, the secondary run, caveats), a
+Contents entry and the `data/api_archive/` and `docs/api/` layout lines. The old test's files in `results/` are byte-identical to before.
+**Caveats:** 41 days, one period, one source; the API and the official feed are probably not independent (99.8% of 14,976 oblast-hours agree), so this says the frozen models hold up on a second feed of the same alerts, not that either feed is
+the real world; the period is busier than the old test; Sep 6 and Oct 18 are not scored.
+**Next (not started, as asked):** `predict.py --now` on live API data; what it needs is written in the reply to the user (token on their machine, a complete 29-day archive, open alerts handled as unknown-end, an offline replay test).

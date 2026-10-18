@@ -293,52 +293,155 @@ def diagnose():
     return 0
 
 
-def score():
+def forward_scores(masked):
+    """Score every predictor on the forward rows. masked=True switches the official outage mask on (secondary run only)."""
     info, frozen, boosters, freq = load_frozen()
-    rows, episodes, raw, feats, api_rows, raions, oblasts, files = build_api([])
+    rows, episodes, raw, feats, api_rows, raions, oblasts, files = build_api(OFFICIAL_OUTAGES if masked else [])
     test = ((rows["t"] >= SCORE_FROM) & (rows["t"] < SCORE_TO)).to_numpy()
-    tr = rows[test]
-    day = tr["t"].dt.strftime("%Y-%m-%d").to_numpy()
-    OUT.mkdir(parents=True, exist_ok=True)
-    table, cal, boot_rows, rel = [], [], [], []
+    out = {}
     for H in HORIZONS:
         y = rows[f"b_start_{H}"].to_numpy()[test]
         S = {k: v.to_numpy()[test] for k, v in scores(rows, feats[H], H, frozen, boosters, freq, oblasts).items()}
         assert all(not np.isnan(v).any() for v in S.values()), "a predictor has missing scores on the forward rows"
+        out[H] = (y, S)
+    return rows[test].reset_index(drop=True), out, frozen
+
+
+def old_scores():
+    """The same frozen artifacts on the OLD official test rows (reproduces results/test_table.csv and results/calibration.md)."""
+    info, frozen, boosters, freq = load_frozen()
+    official, raions = load_inputs()
+    rows, episodes, raw, first, end = build_rows(official, raions)
+    oblasts = sorted(rows["oblast"].unique())
+    feats = build_features(rows, episodes, raw, load_neighbours(), HORIZONS, oblasts)
+    out = {}
+    for H in HORIZONS:
+        test = split(rows, first, end, end - pd.Timedelta(days=30), H, EVAL_LOOKBACK)["test"].to_numpy()
+        S = {k: v.to_numpy()[test] for k, v in scores(rows, feats[H], H, frozen, boosters, freq, oblasts).items()}
+        out[H] = (rows[f"b_start_{H}"].to_numpy()[test], S)
+    return out
+
+
+def summary_table(tr, res, frozen):
+    t = []
+    for H, (y, S) in res.items():
         for name, s in S.items():
-            thr = frozen["thresholds"][str(H)][name]
-            r = summarize(y, s, tr["oblast"], thr)
-            table.append({"H": H, "predictor": NAMES[name], "n": len(y), "base_rate": float(y.mean()), "auc_within_oblast": r["auc_within_oblast"],
-                          "brier": r["brier"], "threshold": r["threshold"], "precision": r["precision"], "recall": r["recall"], "f1": r["f1"]})
-            if name in ("lgbm", "logit", "frequency", "freq4w"):
-                d = brier_decomposition(y, s)
-                cal.append({"H": H, "predictor": NAMES[name], "mean_predicted": float(s.mean()), "observed": float(y.mean()),
-                            **{k: float(v) for k, v in d.items()}})
-            if name in ("lgbm", "frequency"):
-                t = reliability_table(y, s).reset_index().rename(columns={"index": "bin"})
-                rel.append(t.assign(H=H, predictor=NAMES[name]))
+            r = summarize(y, s, tr["oblast"], frozen["thresholds"][str(H)][name])
+            t.append({"H": H, "predictor": NAMES[name], "n": len(y), "base_rate": float(y.mean()), "auc_within_oblast": r["auc_within_oblast"],
+                      "brier": r["brier"], "threshold": r["threshold"], "precision": r["precision"], "recall": r["recall"], "f1": r["f1"]})
+    return pd.DataFrame(t)
+
+
+def in_the_large(res, names=("lgbm", "logit", "frequency", "freq4w")):
+    """Mean predicted vs observed; Brier = bias^2 + Var(p - y) exactly, so bias^2 is the calibration-in-the-large part of the Brier score."""
+    r = []
+    for H, (y, S) in res.items():
+        for k in names:
+            p = S[k]
+            bias = float(p.mean() - y.mean())
+            br = brier(y, p)
+            r.append({"H": H, "predictor": NAMES[k], "mean_predicted": float(p.mean()), "observed": float(y.mean()), "bias": bias,
+                      "bias^2": bias ** 2, "brier": br, "bias^2 share of Brier": bias ** 2 / br})
+    return pd.DataFrame(r)
+
+
+def brier_change(old, new, names=("lgbm", "frequency")):
+    """Old test -> forward test: the change in Brier and in its Murphy terms, and in the squared bias."""
+    r = []
+    for H in HORIZONS:
+        for k in names:
+            row = {"H": H, "predictor": NAMES[k]}
+            terms = {}
+            for lab, (y, S) in (("old", old[H]), ("fwd", new[H])):
+                d = brier_decomposition(y, S[k])
+                bias = float(S[k].mean() - y.mean())
+                terms[lab] = {**d, "bias2": bias ** 2, "mean_pred": float(S[k].mean()), "observed": float(y.mean())}
+            for key, label in [("brier", "Brier"), ("uncertainty", "uncertainty (base rate x (1 - base rate))"), ("reliability", "reliability"),
+                               ("resolution", "resolution"), ("residual", "residual"), ("bias2", "bias^2")]:
+                row[f"{label} old"] = terms["old"][key]
+                row[f"{label} fwd"] = terms["fwd"][key]
+                row[f"{label} change"] = terms["fwd"][key] - terms["old"][key]
+            r.append(row)
+    return pd.DataFrame(r)
+
+
+def brier_words(CH):
+    """The Brier change in plain words, generated from the numbers of brier_change()."""
+    out = []
+    for _, r in CH.iterrows():
+        unc, ch = r["uncertainty (base rate x (1 - base rate)) change"], r["Brier change"]
+        out.append(
+            f"- H={int(r['H'])}, {r['predictor']}: Brier {r['Brier old']:.4f} -> {r['Brier fwd']:.4f} ({ch:+.4f}). The higher base rate alone changes the uncertainty term by {unc:+.4f}"
+            f" ({100 * unc / ch:.0f}% of the change); resolution changes by {r['resolution change']:+.4f} (a rise lowers the Brier), reliability by {r['reliability change']:+.4f}, "
+            f"residual by {r['residual change']:+.4f}. Calibration in the large: squared bias {r['bias^2 old']:.4f} -> {r['bias^2 fwd']:.4f} "
+            f"({r['bias^2 change']:+.4f}, {100 * r['bias^2 change'] / ch:.0f}% of the Brier change).")
+    return "\n".join(out)
+
+
+def score():
+    tr, res, frozen = forward_scores(False)
+    old = old_scores()
+    day = tr["t"].dt.strftime("%Y-%m-%d").to_numpy()
+    n_rows = len(tr)
+    OUT.mkdir(parents=True, exist_ok=True)
+    T = summary_table(tr, res, frozen)
+    cal, rel, boot_rows = [], [], []
+    for H, (y, S) in res.items():
+        for name in ("lgbm", "logit", "frequency", "freq4w"):
+            d = brier_decomposition(y, S[name])
+            cal.append({"H": H, "predictor": NAMES[name], "mean_predicted": float(S[name].mean()), "observed": float(y.mean()),
+                        **{k: float(v) for k, v in d.items()}})
+        for name in ("lgbm", "frequency"):
+            rel.append(reliability_table(y, S[name]).reset_index().rename(columns={"index": "bin"}).assign(H=H, predictor=NAMES[name]))
         b = day_bootstrap(y, S, tr["oblast"], day)
         for name, v in b.items():
             boot_rows.append({"H": H, "predictor": NAMES[name], **v})
-        print(f"H={H} scored ({len(y)} rows)", flush=True)
-    T, C, B = pd.DataFrame(table), pd.DataFrame(cal), pd.DataFrame(boot_rows)
-    R = pd.concat(rel)
+        print(f"H={H} bootstrap done ({len(y)} rows)", flush=True)
+    C, B, R = pd.DataFrame(cal), pd.DataFrame(boot_rows), pd.concat(rel)
+    L, CH = in_the_large(res), brier_change(old, res)
     T.to_csv(OUT / "forward_table.csv", index=False, float_format="%.4f")
     head = ("# Forward test on the Ukraine Alarm API (2026-09-07 to 2026-10-17)\n\n"
-            "**Source: the Ukraine Alarm API (`api.ukrainealarm.com`), one source for every feature and every outcome.** The models are the frozen round-13 fits "
-            "(trained on official data to 2026-08-07; thresholds from the last train week; nothing refitted, nothing retuned). "
-            f"**41 days, {int(test.sum())} oblast-hours per horizon: a short test, so the intervals below are wide.** This is separate from the old test "
-            "(official data, 24 days); the two are not pooled. Target (b): a new alert starts in (t, t+H].\n\n")
+            "**Source: the Ukraine Alarm API (`api.ukrainealarm.com`), one source for every feature and every outcome; no outage mask.** The models are the frozen round-13 fits "
+            "(trained on official data to 2026-08-07; every threshold from the last train week; nothing refitted, nothing retuned). "
+            f"**41 days, {n_rows} oblast-hours per horizon: a short test, so the intervals in `bootstrap.md` are wide.** This is separate from the old test "
+            "(official data, 24 days, `results/test_table.md`); the two are not pooled. Target (b): a new alert starts in (t, t+H]. "
+            "The forward period is busier than the old test (share of origins with a new alert at H=1: 0.180 against 0.121), so read the Brier scores with `calibration.md` next to them.\n\n")
     (OUT / "forward_table.md").write_text(head + md(T) + "\n\nThresholds are the frozen max-F1 thresholds from the last train week; 'raw 0/1' means the baseline is taken as is.\n")
-    (OUT / "calibration.md").write_text("Forward test, target (b). Brier = reliability - resolution + uncertainty (+ residual from 10 equal-width bins).\n\n"
-                                        + md(C, "{:.4f}") + "\n\nReliability table:\n\n" + md(R[["H", "predictor", "bin", "mean_predicted", "observed", "n"]]) + "\n")
     cols = ["H", "predictor", "auc", "auc_lo", "auc_hi", "brier", "brier_lo", "brier_hi"]
     diff = B[B["predictor"] != NAMES["lgbm"]][["H", "predictor", "d_auc", "d_auc_lo", "d_auc_hi", "share_auc_ahead", "d_brier", "d_brier_lo", "d_brier_hi", "share_brier_ahead"]]
-    (OUT / "bootstrap.md").write_text(f"Day-block bootstrap, whole days resampled with replacement, {N_BOOT} resamples, seed 0, 95% percentile intervals.\n\n"
+    (OUT / "bootstrap.md").write_text(f"Forward test (API, 41 days). Day-block bootstrap, whole days resampled with replacement, {N_BOOT} resamples, seed 0, 95% percentile intervals.\n\n"
                                       "Each predictor (within-oblast AUC, Brier):\n\n" + md(B[cols]) + "\n\nLightGBM minus each other predictor "
                                       "(AUC: positive = LightGBM ahead; Brier: negative = LightGBM ahead):\n\n" + md(diff) + "\n")
-    print(md(T)); print(md(B[cols])); print(md(diff))
-    print(f"wrote {OUT.relative_to(ROOT)}/")
+    (OUT / "calibration.md").write_text(
+        "Forward test (API, 41 days), target (b), frozen models.\n\n"
+        "## Calibration in the large: mean predicted against observed\n\n"
+        "Brier = (mean predicted - observed)^2 + Var(p - y), exactly, so `bias^2` is the part of the Brier score that is calibration-in-the-large.\n\n"
+        + md(L, "{:.4f}") + "\n\n"
+        "## How the Brier score changed from the old test to the forward test\n\n"
+        "Old test = the same frozen artifacts on the old official test rows (24 days; reproduces `results/calibration.md`). Murphy terms as in `results/calibration.md`: "
+        "Brier = reliability - resolution + uncertainty + residual. `uncertainty` is base rate x (1 - base rate): a higher base rate raises it for any forecaster.\n\n"
+        + md(CH, "{:.4f}") + "\n\nIn words (generated from the table above; percentages can exceed 100 or be negative because the terms offset each other):\n\n" + brier_words(CH) + "\n\n"
+        "## Brier decomposition, forward test\n\n" + md(C, "{:.4f}") + "\n\nReliability table (10 bins):\n\n"
+        + md(R[["H", "predictor", "bin", "mean_predicted", "observed", "n"]]) + "\n")
+    print(md(T)); print(md(B[cols])); print(md(diff)); print(md(L, "{:.4f}"))
+    print(f"wrote {OUT.relative_to(ROOT)}/ (main, no mask)")
+
+    # secondary: the official outage mask switched on for the API features
+    tr2, res2, _ = forward_scores(True)
+    T2 = summary_table(tr2, res2, frozen)
+    cmp_ = T.merge(T2, on=["H", "predictor"], suffixes=("", "_masked"))
+    cmp_ = cmp_[["H", "predictor", "auc_within_oblast", "auc_within_oblast_masked", "brier", "brier_masked", "f1", "f1_masked"]]
+    cmp_.insert(4, "AUC change", cmp_["auc_within_oblast_masked"] - cmp_["auc_within_oblast"])
+    cmp_.insert(7, "Brier change", cmp_["brier_masked"] - cmp_["brier"])
+    L2 = in_the_large(res2, ("lgbm", "logit", "freq4w"))
+    (OUT / "secondary_mask_on.md").write_text(
+        "# SECONDARY, not the result: the forward test with the official outage mask switched on for the API features\n\n"
+        "The main result (`forward_table.md`) uses no mask, because the API observed 2026-08-29..09-02. This run applies the official feed's mask anyway "
+        "(7-day windows that overlap the outage computed over the observed part and scaled, freq4w lags that touch it skipped), to show what the choice changes. "
+        "Same frozen models and thresholds, same rows. Only the LightGBM, the logistic model and the rolling 4-week frequency use these features; the other predictors are identical in both runs. "
+        "Point estimates only (no bootstrap).\n\n" + md(cmp_, "{:.4f}") + "\n\nCalibration in the large, masked features:\n\n" + md(L2, "{:.4f}") + "\n")
+    print(md(cmp_, "{:.4f}"))
+    print(f"wrote {OUT.relative_to(ROOT)}/secondary_mask_on.md")
     return 0
 
 

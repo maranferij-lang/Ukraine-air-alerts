@@ -7,6 +7,7 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [Targets, baselines, evaluation (`scripts/evaluate.py`)](#targets-baselines-evaluation-scriptsevaluatepy): the two targets, the three simple rules, the metrics.
 - [Model (`scripts/evaluate.py`, `src/features.py`)](#model-scriptsevaluatepy-srcfeaturespy): the features and the LightGBM setup.
 - [News and text data](#news-and-text-data): why the main model uses no text, and two experiments that were tried: GDELT news (a negative result) and Telegram posts (a real gain that lasts only minutes, so a nowcasting signal and not a forecast). The main model uses neither.
+- [Forward test on the Ukraine Alarm API](#forward-test-on-the-ukraine-alarm-api): the frozen models scored on 41 days of live API data, separate from the old test.
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -382,6 +383,122 @@ Feature importance (`results/telegram/feature_importance.md`): only `tg_min_sinc
   on purpose.
 - Sep 4–5 is 48 origins per oblast.
 
+## Forward test on the Ukraine Alarm API
+
+**Source: the Ukraine Alarm API (`api.ukrainealarm.com`), one source for every feature and every outcome.** Separate from the old test (official data, 24 days); the two are not pooled.
+Files: `results/forward_api/` (made by `scripts/forward_test.py --score`), archive `data/api_archive/` (made by `scripts/archive_api.py`), consistency with the official data `results/api_check.md`.
+
+- **What is frozen:** the round-13 LightGBM fits, the logistic weights, the train-frequency table and every F1 threshold (all from official data to 2026-08-07; thresholds from the last train week), saved by `scripts/evaluate.py`
+  in `models/` (`frozen.json`). Nothing is refitted or retuned. `forward_test.py --selftest` shows the scoring code gives the old test's table back from these artifacts.
+- **Rows:** origins 2026-09-07 00:00 to 2026-10-17 23:00 UTC, **41 days**, 23,616 oblast-hours per horizon; targets close by 2026-10-18 06:00. Features use the API archive only, from 2026-08-06 (so the 7-day windows and the four lags of
+  `freq4w` are complete). **No outage mask:** the mask in `src/features.py` exists because the official feed had no data for 2026-08-29..09-02; the API has, so masking would throw away observed data (decided before scoring, in `PROCESS_LOG.md`).
+- **Checked before scoring (`results/forward_api/diagnostics.md`):** features built from the API equal the official ones on the same rows (Aug 13-28) apart from sub-second timing and the Aug 19-20 wave; a leakage check on 40 forward origins
+  (37,440 values) has 0 mismatches; no thin days in the API; the forward period is busier than the old test (share of origins with a new alert at H=1: 0.180 against 0.121; at H=6: 0.571 against 0.432).
+- **Predictors:** LightGBM, logistic, the three baselines of the old test (same as now, same hour yesterday, train frequency) and, as an extra, the rolling 4-week frequency (the model's `freq4w` feature used as a score; frozen threshold).
+  Target (b) only. Thresholded metrics at the frozen thresholds; 0/1 baselines raw.
+
+### Results (within-oblast AUC, Brier, precision, recall, F1)
+| H | predictor | n | base_rate | auc_within_oblast | brier | threshold | precision | recall | f1 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | LightGBM | 23616 | 0.180 | 0.708 | 0.119 | 0.187 | 0.419 | 0.669 | 0.515 |
+| 1 | logistic | 23616 | 0.180 | 0.538 | 0.136 | 0.148 | 0.306 | 0.700 | 0.426 |
+| 1 | same as now | 23616 | 0.180 | 0.407 | 0.400 | raw 0/1 | 0.116 | 0.186 | 0.143 |
+| 1 | same hour yesterday | 23616 | 0.180 | 0.515 | 0.255 | raw 0/1 | 0.287 | 0.283 | 0.285 |
+| 1 | train frequency | 23616 | 0.180 | 0.531 | 0.152 | 0.075 | 0.246 | 0.622 | 0.353 |
+| 1 | rolling 4-week frequency | 23616 | 0.180 | 0.519 | 0.160 | 0.250 | 0.266 | 0.631 | 0.374 |
+| 3 | LightGBM | 23616 | 0.414 | 0.662 | 0.167 | 0.243 | 0.613 | 0.877 | 0.721 |
+| 3 | logistic | 23616 | 0.414 | 0.561 | 0.183 | 0.321 | 0.642 | 0.781 | 0.705 |
+| 3 | same as now | 23616 | 0.414 | 0.459 | 0.429 | raw 0/1 | 0.474 | 0.329 | 0.389 |
+| 3 | same hour yesterday | 23616 | 0.414 | 0.532 | 0.323 | raw 0/1 | 0.612 | 0.603 | 0.607 |
+| 3 | train frequency | 23616 | 0.414 | 0.522 | 0.259 | 0.176 | 0.549 | 0.667 | 0.602 |
+| 3 | rolling 4-week frequency | 23616 | 0.414 | 0.536 | 0.216 | 0.250 | 0.546 | 0.884 | 0.675 |
+| 6 | LightGBM | 23616 | 0.571 | 0.654 | 0.143 | 0.314 | 0.750 | 0.915 | 0.824 |
+| 6 | logistic | 23616 | 0.571 | 0.573 | 0.152 | 0.289 | 0.756 | 0.899 | 0.821 |
+| 6 | same as now | 23616 | 0.571 | 0.475 | 0.445 | raw 0/1 | 0.719 | 0.363 | 0.482 |
+| 6 | same hour yesterday | 23616 | 0.571 | 0.536 | 0.264 | raw 0/1 | 0.772 | 0.763 | 0.768 |
+| 6 | train frequency | 23616 | 0.571 | 0.519 | 0.256 | 0.278 | 0.732 | 0.717 | 0.725 |
+| 6 | rolling 4-week frequency | 23616 | 0.571 | 0.528 | 0.189 | 0.500 | 0.769 | 0.827 | 0.797 |
+
+### Intervals (day-block bootstrap: whole days resampled with replacement, 1,000 resamples, seed 0, 95% percentile intervals)
+Each predictor:
+
+| H | predictor | auc | auc_lo | auc_hi | brier | brier_lo | brier_hi |
+|---|---|---|---|---|---|---|---|
+| 1 | LightGBM | 0.708 | 0.677 | 0.731 | 0.119 | 0.113 | 0.126 |
+| 1 | logistic | 0.538 | 0.503 | 0.570 | 0.136 | 0.128 | 0.145 |
+| 1 | same as now | 0.407 | 0.394 | 0.418 | 0.400 | 0.377 | 0.424 |
+| 1 | same hour yesterday | 0.515 | 0.507 | 0.523 | 0.255 | 0.243 | 0.268 |
+| 1 | train frequency | 0.531 | 0.508 | 0.550 | 0.152 | 0.141 | 0.163 |
+| 1 | rolling 4-week frequency | 0.519 | 0.511 | 0.526 | 0.160 | 0.152 | 0.169 |
+| 3 | LightGBM | 0.662 | 0.622 | 0.691 | 0.167 | 0.160 | 0.174 |
+| 3 | logistic | 0.561 | 0.529 | 0.589 | 0.183 | 0.174 | 0.192 |
+| 3 | same as now | 0.459 | 0.446 | 0.471 | 0.429 | 0.412 | 0.447 |
+| 3 | same hour yesterday | 0.532 | 0.517 | 0.544 | 0.323 | 0.311 | 0.338 |
+| 3 | train frequency | 0.522 | 0.498 | 0.544 | 0.259 | 0.243 | 0.276 |
+| 3 | rolling 4-week frequency | 0.536 | 0.523 | 0.548 | 0.216 | 0.207 | 0.225 |
+| 6 | LightGBM | 0.654 | 0.610 | 0.689 | 0.143 | 0.134 | 0.152 |
+| 6 | logistic | 0.573 | 0.537 | 0.605 | 0.152 | 0.142 | 0.162 |
+| 6 | same as now | 0.475 | 0.458 | 0.489 | 0.445 | 0.429 | 0.459 |
+| 6 | same hour yesterday | 0.536 | 0.517 | 0.555 | 0.264 | 0.244 | 0.285 |
+| 6 | train frequency | 0.519 | 0.487 | 0.548 | 0.256 | 0.243 | 0.271 |
+| 6 | rolling 4-week frequency | 0.528 | 0.505 | 0.551 | 0.189 | 0.178 | 0.200 |
+
+LightGBM minus each other predictor (AUC: positive = LightGBM ahead; Brier: negative = LightGBM ahead; `share_*_ahead` = share of resamples in which it is ahead):
+
+| H | predictor | d_auc | d_auc_lo | d_auc_hi | share_auc_ahead | d_brier | d_brier_lo | d_brier_hi | share_brier_ahead |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | logistic | 0.170 | 0.138 | 0.205 | 1.000 | -0.017 | -0.019 | -0.014 | 1.000 |
+| 1 | same as now | 0.301 | 0.267 | 0.328 | 1.000 | -0.281 | -0.301 | -0.262 | 1.000 |
+| 1 | same hour yesterday | 0.193 | 0.161 | 0.218 | 1.000 | -0.136 | -0.144 | -0.127 | 1.000 |
+| 1 | train frequency | 0.177 | 0.140 | 0.210 | 1.000 | -0.032 | -0.037 | -0.028 | 1.000 |
+| 1 | rolling 4-week frequency | 0.189 | 0.159 | 0.211 | 1.000 | -0.041 | -0.044 | -0.038 | 1.000 |
+| 3 | logistic | 0.101 | 0.068 | 0.138 | 1.000 | -0.016 | -0.019 | -0.013 | 1.000 |
+| 3 | same as now | 0.203 | 0.165 | 0.234 | 1.000 | -0.263 | -0.278 | -0.247 | 1.000 |
+| 3 | same hour yesterday | 0.130 | 0.093 | 0.159 | 1.000 | -0.157 | -0.170 | -0.145 | 1.000 |
+| 3 | train frequency | 0.140 | 0.106 | 0.175 | 1.000 | -0.092 | -0.106 | -0.078 | 1.000 |
+| 3 | rolling 4-week frequency | 0.126 | 0.088 | 0.157 | 1.000 | -0.049 | -0.055 | -0.043 | 1.000 |
+| 6 | logistic | 0.080 | 0.050 | 0.109 | 1.000 | -0.009 | -0.011 | -0.007 | 1.000 |
+| 6 | same as now | 0.179 | 0.135 | 0.215 | 1.000 | -0.302 | -0.318 | -0.286 | 1.000 |
+| 6 | same hour yesterday | 0.117 | 0.079 | 0.146 | 1.000 | -0.121 | -0.137 | -0.105 | 1.000 |
+| 6 | train frequency | 0.135 | 0.090 | 0.170 | 1.000 | -0.113 | -0.132 | -0.097 | 1.000 |
+| 6 | rolling 4-week frequency | 0.126 | 0.078 | 0.165 | 1.000 | -0.046 | -0.053 | -0.038 | 1.000 |
+
+### Calibration in the large, and what the higher base rate does to the Brier score
+Mean predicted against observed, per horizon. Brier = (mean predicted - observed)^2 + Var(p - y) exactly, so `bias^2` is the calibration-in-the-large part of the Brier score:
+
+| H | predictor | mean_predicted | observed | bias | bias^2 | brier | bias^2 share of Brier |
+|---|---|---|---|---|---|---|---|
+| 1 | LightGBM | 0.1516 | 0.1796 | -0.0280 | 0.0008 | 0.1193 | 0.0066 |
+| 1 | logistic | 0.1561 | 0.1796 | -0.0235 | 0.0006 | 0.1359 | 0.0041 |
+| 1 | train frequency | 0.0857 | 0.1796 | -0.0940 | 0.0088 | 0.1517 | 0.0582 |
+| 1 | rolling 4-week frequency | 0.1549 | 0.1796 | -0.0247 | 0.0006 | 0.1603 | 0.0038 |
+| 3 | LightGBM | 0.3681 | 0.4143 | -0.0462 | 0.0021 | 0.1666 | 0.0128 |
+| 3 | logistic | 0.3731 | 0.4143 | -0.0412 | 0.0017 | 0.1827 | 0.0093 |
+| 3 | train frequency | 0.2258 | 0.4143 | -0.1886 | 0.0356 | 0.2590 | 0.1373 |
+| 3 | rolling 4-week frequency | 0.3680 | 0.4143 | -0.0464 | 0.0022 | 0.2159 | 0.0100 |
+| 6 | LightGBM | 0.5315 | 0.5711 | -0.0396 | 0.0016 | 0.1428 | 0.0110 |
+| 6 | logistic | 0.5413 | 0.5711 | -0.0298 | 0.0009 | 0.1516 | 0.0059 |
+| 6 | train frequency | 0.3691 | 0.5711 | -0.2020 | 0.0408 | 0.2563 | 0.1592 |
+| 6 | rolling 4-week frequency | 0.5192 | 0.5711 | -0.0519 | 0.0027 | 0.1889 | 0.0143 |
+
+How the Brier score changed from the old test to this one (old rows re-scored with the same frozen artifacts; Murphy terms as in `results/calibration.md`; the full table and the reliability bins are in `results/forward_api/calibration.md`):
+
+- H=1, LightGBM: Brier 0.0875 -> 0.1193 (+0.0318). The higher base rate alone changes the uncertainty term by +0.0407 (128% of the change); resolution changes by +0.0097 (a rise lowers the Brier), reliability by +0.0012, residual by -0.0003. Calibration in the large: squared bias 0.0001 -> 0.0008 (+0.0007, 2% of the Brier change).
+- H=1, train frequency: Brier 0.1014 -> 0.1517 (+0.0503). The higher base rate alone changes the uncertainty term by +0.0407 (81% of the change); resolution changes by -0.0022 (a rise lowers the Brier), reliability by +0.0076, residual by -0.0002. Calibration in the large: squared bias 0.0013 -> 0.0088 (+0.0076, 15% of the Brier change).
+- H=3, LightGBM: Brier 0.1446 -> 0.1666 (+0.0220). The higher base rate alone changes the uncertainty term by +0.0344 (156% of the change); resolution changes by +0.0144 (a rise lowers the Brier), reliability by +0.0019, residual by +0.0002. Calibration in the large: squared bias 0.0003 -> 0.0021 (+0.0018, 8% of the Brier change).
+- H=3, train frequency: Brier 0.1773 -> 0.2590 (+0.0817). The higher base rate alone changes the uncertainty term by +0.0344 (42% of the change); resolution changes by -0.0147 (a rise lowers the Brier), reliability by +0.0328, residual by -0.0002. Calibration in the large: squared bias 0.0049 -> 0.0356 (+0.0307, 38% of the Brier change).
+- H=6, LightGBM: Brier 0.1398 -> 0.1428 (+0.0030). The higher base rate alone changes the uncertainty term by -0.0001 (-5% of the change); resolution changes by -0.0015 (a rise lowers the Brier), reliability by +0.0014, residual by +0.0003. Calibration in the large: squared bias 0.0001 -> 0.0016 (+0.0015, 49% of the Brier change).
+- H=6, train frequency: Brier 0.1777 -> 0.2563 (+0.0785). The higher base rate alone changes the uncertainty term by -0.0001 (-0% of the change); resolution changes by -0.0386 (a rise lowers the Brier), reliability by +0.0406, residual by -0.0005. Calibration in the large: squared bias 0.0036 -> 0.0408 (+0.0372, 47% of the Brier change).
+
+### Secondary, not the result: the same test with the official outage mask on
+`results/forward_api/secondary_mask_on.md`. Switching the mask on changes the model's within-oblast AUC by at most 0.0020 and its Brier by at most 0.0006 (any horizon); the logistic model by at most 0.0022 in AUC; the rolling 4-week frequency baseline moves more in Brier (up to +0.0102 at H=6).
+Same frozen models, same thresholds, point estimates only.
+
+### Caveats
+- 41 days is short, and the intervals show it (for example the LightGBM AUC at H=1: see the interval table). One period, one source.
+- The API and the official feed are probably not independent (the API names the official channel among its sources): `results/api_check.md` shows our rules give the same oblast series from both (99.8% of 14,976 oblast-hours agree), not that either is right about reality.
+- The period is busier than the old test and the models predict low (see the calibration table); nothing was recalibrated. Not compared: anything after 2026-10-17, and Sep 6 (neither in the official trusted range nor in this test).
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -541,6 +658,8 @@ src/telegram_*.py     Telegram post parser (oblasts, threat types) and per-oblas
 data/neighbours.csv  hand-written oblast adjacency (land borders), used by the neighbour features
 data/news/           GDELT hourly aggregate + pull record (the news experiment)
 data/source_check/    public posts of the official alert channel for Aug 13–18 (compressed), for results/source_check.md
+data/api_archive/      Ukraine Alarm API history saved by scripts/archive_api.py (the forward test and the API check read it)
+docs/api/             the API's swagger json
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)
 scripts/             one script per step, run from the repo root

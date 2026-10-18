@@ -25,6 +25,18 @@ New alert within H hours, test window of 24 days. Each cell is within-oblast AUC
 - **Not established:** LightGBM's within-oblast edge over the frequency baseline at H=6. It wins in 13 of 24 oblasts on Aug 7–28 and 18 of 24 on all 24 days. Also not established: whether the Sep 4–5 drop comes from the scaled features or from the days themselves.
 - **Telegram (separate experiment, not in the model above):** posts of the Air Force channel help only when they are minutes old, so they are a nowcasting signal, not a forecasting one; numbers next to the baselines in [News and text data](docs/DETAILS.md#news-and-text-data). The main model stays the full-history LightGBM without Telegram.
 
+### Forward test on live data (a separate test, not mixed with the table above)
+**Source: the Ukraine Alarm API, for every feature and every outcome.** The same frozen models (trained on official data to 2026-08-07; nothing refitted, nothing retuned, thresholds as before) scored on the 41 days 2026-09-07 to 10-17, 23,616 oblast-hours per horizon. It is a short test, so the intervals are wide. Within-oblast AUC / Brier:
+
+| H | LightGBM | its AUC, 95% interval over days | Train frequency | Same hour yesterday | Same as now |
+|---|---|---|---|---|---|
+| 1 | 0.708 / 0.119 | 0.708 (0.677–0.731) | 0.531 / 0.152 | 0.515 / 0.255 | 0.407 / 0.400 |
+| 3 | 0.662 / 0.167 | 0.662 (0.622–0.691) | 0.522 / 0.259 | 0.532 / 0.323 | 0.459 / 0.429 |
+| 6 | 0.654 / 0.143 | 0.654 (0.610–0.689) | 0.519 / 0.256 | 0.536 / 0.264 | 0.475 / 0.445 |
+
+- In this period the model is ahead of every simple rule on both AUC and Brier, and the day-resampling intervals of the differences stay on the model's side (for example against train frequency: AUC 0.177 [0.140, 0.210] at H=1, 0.135 [0.090, 0.170] at H=6). The old test's "not established" at H=6 stands for that test; this is one more period, not a replacement.
+- New alerts were more frequent than in the old test, and the models, fixed on the quieter data, predict a little low: mean predicted against observed 0.1516 against 0.1796 at H=1, 0.3681 against 0.4143 at H=3, 0.5315 against 0.5711 at H=6. Details, the extra baselines, the Brier split and a run with the official outage mask: [DETAILS](docs/DETAILS.md#forward-test-on-the-ukraine-alarm-api), [results/forward_api/](results/forward_api/).
+
 ![Model and the three simple rules at H = 6: within-oblast AUC, Brier, precision, recall and F1](figures/model_vs_baselines_h6.png)
 
 Look at the left panel (the question of this project: a new alert within 6 hours). On Brier, lower is better, and the purple LightGBM dot is clearly the furthest left; on AUC it is only slightly right of the green frequency dot, which is the edge listed above as not established. The right panel is the other target (any alert in the window), which is not the question.
@@ -113,4 +125,4 @@ Where the checks caught mistakes:
 
 The full list, what we would do next, and everything else moved out of this page (data, targets, model, the news and Telegram experiments, run order, definitions, layout) are in [docs/DETAILS.md](docs/DETAILS.md): [Data](docs/DETAILS.md#data), [Targets, baselines, evaluation](docs/DETAILS.md#targets-baselines-evaluation-scriptsevaluatepy), [Model](docs/DETAILS.md#model-scriptsevaluatepy-srcfeaturespy), [News and text data](docs/DETAILS.md#news-and-text-data), [Limitations](docs/DETAILS.md#limitations-and-what-we-would-do-next), [Run order](docs/DETAILS.md#run-order), [Definitions](docs/DETAILS.md#definitions), [Layout](docs/DETAILS.md#layout).
 
-Status: final (round 13). Files to open first: `results/test_table.md`, `figures/model_vs_baselines_h6.png`, `PROCESS_LOG.md`.
+Status: final on main (round 13); this branch adds round 14, the forward test on API data. Files to open first: `results/test_table.md`, `figures/model_vs_baselines_h6.png`, `PROCESS_LOG.md`.
