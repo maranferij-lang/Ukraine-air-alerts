@@ -2385,3 +2385,51 @@ Desktop 1440 x 900: default, an oblast selected, 6 h, popover, English; zoomed c
 
 ### Mac commands
 git pull; source .venv/bin/activate; python scripts/check_forecast_map.py; python scripts/predict.py --at "2026-08-20 12:00" --all; open output/forecast_map.html; then with the token as before: python scripts/predict.py --now; open output/forecast_map.html.
+
+## 2026-10-19 — Round 20 (branch `live`): personal Telegram alert bot, hourly launchd job, thresholds with one decimal
+**No model, data, threshold or result changed.** The bot reads what `predict.py --now` already produces. Replay test, forward-test self-test and `check_forecast_map.py` still pass; `check_alert_bot.py` (new, offline, about a minute) passes.
+
+### 7. Thresholds with one decimal on the page (done first)
+Thresholds on the page now have one decimal ("25,2%" in Ukrainian, "25.2%" in English): the chip in the panel, the bar ticks, the history chart's threshold label and the thresholds line. **One addition you did not ask for:** probabilities stay whole percent, so "25%" against a "25,2%" threshold can still look wrong (25,4% shows as 25% and is above). Within one percentage point of the threshold the panel chip therefore also shows the probability with one decimal ("▲ 25,2%, не нижче порога 25,2%" / "▽ 25,1%, нижче порога 25,2%"); everywhere else nothing changes. The no-raw-decimal test now allows `25.2%` but still fails on `0.252`.
+
+### What was built
+- `scripts/alert_bot.py` + `config/alert_bot.conf`. After a `--now` forecast, a message when a watched oblast goes from below its threshold to at or above it for h=1. Defaults: м. Київ and Київська область at 50%; names (Ukrainian or English, full or short), thresholds and `cooldown_hours` editable in the file; `--check` shows how it was read and reports every mistake. Nothing while it stays above; at most one message per oblast per 3 hours (a crossing inside the cooldown is held back and counted in the status line); a message per oblast, so Київ and Київська crossing together are two messages.
+- Message, Ukrainian, five lines: oblast and the threshold crossed; "Протягом 1 год: 61%, 3 год: 90%, 6 год: 97%."; "Тривога на годину прогнозу: ні/так."; "Година прогнозу: 15:00 (Київ)."; "Навчальна модель, слідкуйте за офіційними тривогами." Plain text (no Markdown parsing), no long dash, tested for summer (+3) and winter (+2) Kyiv time.
+- `--test` (one test message, no forecast), `--dry-run` (print, send nothing, change nothing), `--check`, `--find-chat-id`.
+- `src/keychain.py` (secrets only from `security find-generic-password -w`), `src/tg.py` (Telegram client, failures reduced to the HTTP status; 0 = no answer), `Client(token=...)` in `src/ukrainealarm.py` and `predict.py --now --token-from-keychain` (the token is read into memory in the predict process only; the environment-variable way for manual runs is unchanged).
+- `scripts/hourly_job.py` (`predict.py --now --token-from-keychain`, then the bot, then nothing; the bot is skipped if the forecast failed; the log gets two status lines per run), `scripts/install_hourly.sh`, `scripts/uninstall_hourly.sh [--delete-secrets]`. launchd: every hour at minute 7, `~/Library/LaunchAgents/local.ukraine-air-alerts.hourly.plist`, only PATH in its environment, status log `~/Library/Logs/ukraine-air-alerts/hourly.log`.
+- `scripts/fakes/` (fake Telegram, Ukraine Alarm API, `security`) and `scripts/check_alert_bot.py`.
+
+### Decisions you should know (not in your text)
+1. **Hand-off file.** `predict.py --now` now also writes `output/last_forecast.json` (git-ignored, no secrets); the bot reads it, not `data/predictions/log.csv`, because the log does not hold the alert state and I did not want to change its header. The bot's own memory is `output/alert_state.json`.
+2. **Crossing needs a previous reading.** The first reading of an oblast, the first after the model changed (v1 to v2, different fingerprint) and the first after a gap of more than 2.5 hours only record where it stands and send nothing, even if it is above the threshold. So installing the job while Київська is already above 50% gives no message until it falls and rises again.
+3. **"Whether an alert is running now" is the state at the origin hour** (the model's own `now`), as on the map; the message says so ("на годину прогнозу") and gives the origin hour next to it.
+4. **The watch thresholds are yours, not the model's frozen thresholds** (those are 25,2/42,7/42,7% for v2); the comparison is on the full probability, not on the rounded percent.
+5. **Sleep.** launchd does not drop a run that falls into sleep: it runs the job once when the Mac wakes (not once per missed hour). After a gap of more than 2.5 hours that run only records (point 2), so missed hours really are just missed. It cannot be configured to skip the wake-up run.
+6. **A failed send is retried next hour** (the oblast keeps its old state, so it crosses again), and the failure is in the log as a Telegram HTTP code; a missing keychain item is named in the status (the item's name is not secret).
+7. **Keychain permission.** The first time `security` reads an item macOS may ask whether it may; an unattended job cannot answer. `alert_bot.py --check` reads each item once (and says so if it is not readable), so run it in Terminal and choose "Always Allow" before installing; the install script runs the same check and refuses to install otherwise. If the login keychain is locked at a run, that hour fails with a status line and is missed.
+8. `config/alert_bot.conf` is committed (no secrets), so your edits show in `git status` and a `git pull` that touches it would conflict; keep the edits or say if you want a git-ignored local copy instead.
+
+### Not tested here
+The real Telegram API, the real macOS keychain and launchd (this machine has none of them). Tested instead with fakes: a Telegram server over real HTTP, a `security` that logs its arguments, a `launchctl` that logs its arguments, and the real Ukraine Alarm days as of 2026-10-10 12:37 UTC. The first run on your Mac is the test of the three; `--check`, `--test` and `--dry-run` exist to make that first run safe.
+
+### Tests (check_alert_bot.py)
+Config (defaults, spellings, 8 kinds of mistakes); the message; the rule in 12 cases (below to above, exactly at, staying above, falling, cooldown at 1 h / 2 h 59 / 3 h, first run, model change, gaps of 2 and 5 h, per-oblast thresholds); the bot against the fake Telegram (once, never twice, still above, cross again inside and after the cooldown, two oblasts, stale, no forecast, a 500 and its retry, wrong chat 400, wrong token 401, missing items, no server = HTTP 0 with no address in the output, dry run, `--test`, `--find-chat-id` with and without messages and with a wrong token, `--check`); secrets (no output, log, state, forecast file, page, prediction log or plist contains a secret; every keychain call that asks for a secret ends in a bare `-w`; the only keychain write in the repository is the hint without a value); the job (order, skip on failure, status lines only, the plist, `bash -n`); install and uninstall with fakes (refuses with a missing item, bootout then bootstrap, uninstall, `--delete-secrets` only on request); the whole chain with the real forecast: Kyivska 61% and Kharkivska 63% crossed (м. Київ 46% did not), exactly those messages arrived, with the forecast's own numbers and "15:00 (Київ)". Breaking the rule, or printing the Telegram address on a failed call, makes it fail.
+
+### Mac commands (one per step)
+1. git pull
+2. source .venv/bin/activate
+3. python scripts/check_alert_bot.py
+4. (Telegram, in the app) @BotFather, /newbot, copy the token
+5. security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-bot-token -w
+6. (Telegram) open your new bot and send /start
+7. python scripts/alert_bot.py --find-chat-id
+8. security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-chat-id -w
+9. security add-generic-password -a "$USER" -s ukraine-air-alerts.ukrainealarm-token -w
+10. python scripts/alert_bot.py --check
+11. python scripts/alert_bot.py --test
+12. python scripts/predict.py --now --token-from-keychain
+13. python scripts/alert_bot.py --dry-run
+14. bash scripts/install_hourly.sh
+15. tail ~/Library/Logs/ukraine-air-alerts/hourly.log
+To stop: bash scripts/uninstall_hourly.sh (add --delete-secrets to remove the keychain items too).

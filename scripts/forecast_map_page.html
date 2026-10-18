@@ -233,6 +233,7 @@ details.all .rows{margin-top:var(--sp-2)}
   function above(u, h) { return u.p[h] >= D.thr[h]; }
   function tri(u, h) { return above(u, h) ? '▲' : '▽'; }
   function pcv(x) { return (x * 100).toFixed(0) + '%'; }
+  function pc1(x) { return (x * 100).toFixed(1).replace('.', D.dec) + '%'; }
   function modelled() { return D.units.filter(function (u) { return u.modelled; }); }
   function ranked(h) { return modelled().sort(function (a, b) { return (b.p[h] - a.p[h]) || (a.idx - b.idx); }); }
   function badge() { return el('span', 'mini', '!'); }
@@ -339,7 +340,8 @@ details.all .rows{margin-top:var(--sp-2)}
     var a = el('div', 'alertrow' + (u.now ? ' on' : '')); if (u.now) a.appendChild(badge()); a.appendChild(el('span', '', u.now ? S.ui_alert_yes : S.ui_alert_no)); a.id = 'alertrow'; pb.appendChild(a);
     var big = el('div', 'big'); big.appendChild(el('span', 'bignum', u.pc[h].slice(0, -1))); big.appendChild(el('span', 'bigunit', '%')); big.id = 'big'; pb.appendChild(big);
     pb.appendChild(el('div', 'bigcap', fmt(S.ui_big_cap, { H: h })));
-    var ab = above(u, h), t = el('span', 'thr ' + (ab ? 'above' : 'below'), tri(u, h) + ' ' + fmt(ab ? S.ui_thr_above : S.ui_thr_below, { thr: D.thrPc[h] })); t.id = 'thr'; pb.appendChild(t);
+    var ab = above(u, h), near = Math.abs(u.p[h] - D.thr[h]) < 0.01;  // within one percentage point of the threshold the whole percent is not enough to see which side it is on: then the probability is shown with one decimal too
+    var t = el('span', 'thr ' + (ab ? 'above' : 'below'), tri(u, h) + ' ' + (near ? fmt(ab ? S.ui_thr_above_near : S.ui_thr_below_near, { p: pc1(u.p[h]), thr: D.thrPc[h] }) : fmt(ab ? S.ui_thr_above : S.ui_thr_below, { thr: D.thrPc[h] }))); t.id = 'thr'; pb.appendChild(t);
     pb.appendChild(el('h3', '', S.ui_bars));
     var bars = el('div', 'bars'); bars.id = 'bars';
     HZ.forEach(function (k) {

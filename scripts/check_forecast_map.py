@@ -208,6 +208,11 @@ def percent_checks():
                   f"[{lg}] calibration note of {model}: decimals in the terminal version, percent only in the page version ({pct_[pct_.index('('):][:90]}...)")
 
 
+def _html_unescape(t):
+    import html as _h
+    return _h.unescape(t)
+
+
 def page_checks(lang="uk"):
     rng = np.random.default_rng(0)
     for origin, offset, mode in ((pd.Timestamp("2026-10-10 12:00", tz="UTC"), "15:00", "live"), (pd.Timestamp("2026-12-10 12:00", tz="UTC"), "14:00", "replay")):
@@ -231,7 +236,7 @@ def page_checks(lang="uk"):
               f"{tag} self-contained: none of {checks_banned} anywhere, url() only for the in-page pattern, exactly two inline scripts (the data and the code)" + (f" (found {found})" if found else ""))
         data = extract_data(page)
         dbad = []
-        if data["lang"] != lang or data["mode"] != mode or data["thr"] != {str(h): thr[h] for h in fm.HORIZONS} or data["edges"] != fm.EDGES or data["thrPc"] != {str(h): f"{100 * thr[h]:.0f}%" for h in fm.HORIZONS}:
+        if data["lang"] != lang or data["mode"] != mode or data["thr"] != {str(h): thr[h] for h in fm.HORIZONS} or data["edges"] != fm.EDGES or data["thrPc"] != {str(h): f"{100 * thr[h]:.1f}".replace(".", "," if lang == "uk" else ".") + "%" for h in fm.HORIZONS}:
             dbad.append("header fields")
         iso_of = {n: iso for n, (iso, _) in fm.OURS.items()}
         mod = {u["iso"]: u for u in data["units"] if u["modelled"]}
@@ -337,8 +342,10 @@ def page_checks(lang="uk"):
         texts = re.sub(r"<[^>]+>", " ", no_style)
         attrs = " ".join(re.findall(r'(?:aria-label|title)="([^"]*)"', page))
         js_texts = " ".join(str(v) for v in list(data["S"].values()) + [data["thrText"]])
-        dec = re.findall(r".{12}\d\.\d.{6}", texts + " " + attrs + " " + js_texts)
-        check(not dec, f"{tag} no raw decimal number anywhere on the page (text, labels, titles, the script's texts): probabilities and thresholds are percent" + (f" (found {dec[:3]})" if dec else ""))
+        dec = re.findall(r".{12}\d\.\d+(?!\d*%).{6}", texts + " " + attrs + " " + js_texts)  # 0.252 is a raw decimal; "25.2%" (a threshold with one decimal) is not
+        thr_line = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=data["thrPc"][str(h)]) for h in fm.HORIZONS))
+        check(thr_line.replace("&", "&amp;") in _html_unescape(page) or thr_line in _html_unescape(page), f"{tag} the thresholds line has one decimal ({data['thrPc']['1']}, {data['thrPc']['3']}, {data['thrPc']['6']})")
+        check(not dec, f"{tag} no raw decimal number anywhere on the page (text, labels, titles, the script's texts): probabilities are whole percent, thresholds percent with one decimal" + (f" (found {dec[:3]})" if dec else ""))
         if lang == "uk":
             longd = re.findall(r".{10}[\u2012-\u2015\u2212].{10}", texts + " " + attrs + " " + js_texts)
             check(not longd, f"{tag} no long dash anywhere in the Ukrainian page" + (f": {longd[:3]}" if longd else ""))

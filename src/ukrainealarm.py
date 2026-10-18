@@ -48,8 +48,9 @@ def our_name(uk_name):
 
 
 class Client:
-    def __init__(self, min_gap=MIN_GAP):
-        self.token = os.environ.get(TOKEN_ENV, "")
+    def __init__(self, min_gap=MIN_GAP, token=None):
+        """`token`: given by the caller (the hourly job reads it from the macOS keychain, src/keychain.py); otherwise it is read from the environment variable."""
+        self.token = token or os.environ.get(TOKEN_ENV, "")
         if not self.token:
             raise SystemExit(f"{TOKEN_ENV} is not set in the environment. Set it in your shell first (it is never read from a file).")
         base = os.environ.get(BASE_ENV, DEFAULT_BASE).rstrip("/")

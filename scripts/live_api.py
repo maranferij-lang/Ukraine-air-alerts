@@ -28,6 +28,7 @@ ARCHIVE = ROOT / "data" / "api_archive" / "date_history"
 MODEL_DIRS = {"v1": ROOT / "models", "v2": ROOT / "models" / "v2"}
 DECISION = ROOT / "results" / "v2" / "decision.json"
 PRED_LOG = ROOT / "data" / "predictions" / "log.csv"
+LAST_FORECAST = ROOT / "output" / "last_forecast.json"   # the hand-off to scripts/alert_bot.py: the whole forecast of the last --now run (no secrets in it)
 PRED_COLUMNS = ["origin_utc", "oblast", "h", "probability", "above_threshold", "threshold", "model_version", "run_time_utc"]
 GRID = pd.Timedelta(days=29)         # freq4w looks 1-4 weeks back
 HISTORY = pd.Timedelta(days=32)      # known_at keeps alerts that ended up to 32 days before t (hours_since_end is capped at 30 days)
@@ -186,14 +187,29 @@ def forward_test_note(lang="en"):
     return calibration_note("v1", lang)
 
 
+def write_last_forecast(origin, made, model, version, thresholds, rows, path=None):
+    """Write the last --now forecast as JSON (atomically): origin and make time (UTC), model and fingerprint, the frozen thresholds and, per oblast, the probability for 1, 3, 6 h
+    and whether an alert is running at the origin hour. scripts/alert_bot.py reads this file; it is git-ignored and holds no secret."""
+    import os
+    path = Path(path or LAST_FORECAST)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"origin": f"{pd.Timestamp(origin).tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}", "made": f"{pd.Timestamp(made).tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}", "model": model, "version": version,
+           "thresholds": {str(H): float(thresholds[H]) for H in HORIZONS},
+           "rows": [{"oblast": r["oblast"], "now": bool(r["now"]), "p": {str(H): float(r["p"][H]) for H in HORIZONS}} for r in rows]}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
 def refuse(lines):
     print("\n".join(lines))
     return 1
 
 
-def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
+def live_forecast(oblast=None, resolve=None, model=None, lang="uk", token=None):
     """Forecast for the last completed hour from the API. Returns the exit code (0 = forecast printed, 1 = refused). `oblast`: show one oblast only
-    (resolve turns the typed name into one of ours)."""
+    (resolve turns the typed name into one of ours). `token`: the Ukraine Alarm token if the caller has it (the hourly job: from the keychain); else the environment variable."""
     import textwrap
     from datetime import timedelta
     from scripts import archive_api
@@ -212,7 +228,7 @@ def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
     days = needed_days(t)
     today = now.date()
     refetch_from = today - timedelta(days=REFETCH_DAYS - 1)
-    c = Client()
+    c = Client(token=token)
 
     lines = []
     res = archive_api.fetch_days(c, [d.date() for d in days], refetch_from, say=lambda m: lines.append(m) if "not saved" in m else None)
@@ -305,4 +321,8 @@ def live_forecast(oblast=None, resolve=None, model=None, lang="uk"):
     forecast_map.write_or_warn(dict(origin=t, made=now, mode="live", model=model, version=model_version(model), model_text=T("map_live", lang) + model_text,
                                     thresholds=thr, notes=notes, rows=map_rows, lang=lang,
                                     history=forecast_map.history_from_log(PRED_LOG, model_version(model))))  # the log already has this run
+    try:
+        write_last_forecast(t, now, model, model_version(model), thr, map_rows)
+    except OSError as e:  # the forecast is already printed and logged; the bot just has nothing new to read
+        print(f"last_forecast.json not written: {type(e).__name__}", file=sys.stderr)
     return 0

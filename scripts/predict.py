@@ -218,6 +218,8 @@ def main():
     when.add_argument("--now", action="store_true", help="live forecast for the last completed hour from the Ukraine Alarm API (needs UA_ALARM_TOKEN in "
                                                           "the environment); every oblast unless --oblast is given")
     ap.add_argument("--lang", choices=["en", "uk"], default="uk", help="language of the output and of the map: uk (Ukrainian, the default) or en (English); error messages stay English")
+    ap.add_argument("--token-from-keychain", action="store_true", help="with --now: read the Ukraine Alarm token from the macOS keychain (item ukraine-air-alerts.ukrainealarm-token) instead of the environment variable; "
+                                                                      "this is how the hourly job runs")
     ap.add_argument("--model", choices=["v1", "v2"], help="with --now: which model to use (default: the one the v2 decision rule chose, results/v2/decision.json)")
     who = ap.add_mutually_exclusive_group()
     who.add_argument("--oblast", help='oblast name or a unique start of it, e.g. "Kyivska", "Kyiv City", "Lviv"')
@@ -225,12 +227,20 @@ def main():
     args = ap.parse_args()
     if args.at and not (args.oblast or args.all):
         ap.error("--at needs --oblast or --all")
+    if args.token_from_keychain and not args.now:
+        ap.error("--token-from-keychain only applies to --now")
     if args.model and not args.now:
         ap.error("--model only applies to --now (--at uses the round-13 model on the official data)")
     if args.now:
         load_models()  # the frozen models must be there (scripts/evaluate.py writes them)
         from scripts.live_api import live_forecast
-        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names)), args.model, args.lang))
+        token = None
+        if args.token_from_keychain:
+            from src import keychain
+            token = keychain.get("alarm_token")
+            if not token:
+                fail(f"Cannot read the Ukraine Alarm token from the keychain (item {keychain.SERVICES['alarm_token']}). Put it there first, see docs/DETAILS.md, section \"The alert bot\".")
+        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names)), args.model, args.lang, token))
 
     info, boosters, freq = load_models()
     lang = args.lang

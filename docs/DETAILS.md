@@ -12,6 +12,7 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [The live forecast log and its scorer](#the-live-forecast-log-and-its-scorer)
 - [v2: LightGBM trained on the combined dataset](#v2-lightgbm-trained-on-the-combined-dataset): the round-16 model, the held-out comparison with frozen v1, the decision rule.
 - [The forecast map](#the-forecast-map): `output/forecast_map.html`, written by `predict.py --now` and `--at`: a dark, map-first product page, Ukrainian by default.
+- [The alert bot](#the-alert-bot): a personal Telegram message when a watched oblast crosses its threshold; the keychain; the hourly launchd job.
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -685,6 +686,23 @@ Rounds 17 to 19. `scripts/predict.py --now` and `--at` write `output/forecast_ma
 - **Checks:** `python scripts/check_forecast_map.py` (about 220 checks: the name match, geometry, the Ukrainian names, the texts of both languages, the history reader, for both languages the page's data block against the forecast it came from, every oblast's colour class, percentage, triangle and badge, the top bar, the popover, the footer, self-containment, the script's syntax with `node --check`, the design-system lint, the colour ramp and tokens, and `predict.py --at` in both languages and with no `--lang`); and `scripts/check_forecast_map_browser.js`, run by it when node and the `playwright` package are there (headless Chromium: no request, the top five in the right order for each horizon, hover, click, keyboard, the big number, the bars and the tick positions, the history chart and its two "none" messages, the popover with Esc and outside click, the freshness pill with a fixed clock at 0, 5, 30, 180 and 3000 minutes and while the page stays open, and at 390 px the bottom sheet, the Kyiv button and the footer line not being covered). Deliberately breaking the page (a top four, a wrong pill threshold) makes these fail. Offline against the fake API (a day cut at 2026-10-10 12:37 UTC): every probability, alert flag and threshold in the page equals the model's own output for the default model, `--model v1`, `--model v2`, `--oblast Kyivska` and `--lang en`, and a refused forecast leaves no page.
 - **Not in the map:** what happened afterwards (the replay shows no outcome), baselines, uncertainty. It is a display of the model's probabilities, which are slightly low on average (the calibration note in the popover says by how much). A browser without `:has()` is no longer a concern (the page no longer uses it); a browser without JavaScript sees the map for 1 h and a table of every number.
 
+## The alert bot
+
+Round 20. A personal Telegram bot: after the hourly `predict.py --now`, a message when an oblast of your watch list crosses its threshold for the next hour. Files: `scripts/alert_bot.py` (the bot), `config/alert_bot.conf` (what to watch, no secrets), `src/keychain.py` and `src/tg.py` (the keychain and Telegram helpers), `scripts/hourly_job.py` with `scripts/install_hourly.sh` and `scripts/uninstall_hourly.sh` (the launchd job), `scripts/check_alert_bot.py` with `scripts/fakes/` (the offline tests).
+
+- **The rule:** for each oblast in `config/alert_bot.conf` (default: м. Київ and Київська область, 50%; edit the file, names in Ukrainian or English, `python scripts/alert_bot.py --check` shows how they are read), the probability of a new alert within 1 hour in the last forecast against the one the bot saw the previous time. A message only when it went from **below** the threshold to **at or above** it. Nothing while it stays above (or below). At most one message per oblast per `cooldown_hours` (3). The first reading of an oblast only records it; so does the first reading after the model changed and the first reading after a gap of more than 2.5 hours (a Mac that slept: those hours are just missed). A message that could not be sent leaves the oblast's old state alone, so the next run tries again. The same forecast is never handled twice, and a forecast made more than 20 minutes ago (the `--now` step failed) is not used.
+- **The hand-off:** `predict.py --now` writes `output/last_forecast.json` (git-ignored, no secrets: origin, make time, model, thresholds, and per oblast the 1/3/6 h probabilities and the alert state at the origin hour). The bot reads that file, not the prediction log, because the log does not hold the alert state. The bot keeps its own memory in `output/alert_state.json`.
+- **The message** (Ukrainian, five short lines): the oblast and the threshold it crossed; 1 / 3 / 6 h in percent; whether an alert is running at the origin hour ("на годину прогнозу", not "this second": the origin is the last completed hour); the origin hour in Kyiv time; "Навчальна модель, слідкуйте за офіційними тривогами."
+- **Secrets only in the macOS keychain.** Three generic-password items, account = your user name: `ukraine-air-alerts.telegram-bot-token`, `ukraine-air-alerts.telegram-chat-id`, `ukraine-air-alerts.ukrainealarm-token`. They are read with `security find-generic-password -w` into memory when needed and nowhere else: not into a file, plist, log, environment variable of another process, command line, error message or the page. A failed Telegram call is reduced to its HTTP status (the bot token is part of Telegram's request address, so the address and the exception text are never passed on); a failed forecast step to its exit code. You put the secrets in yourself, at the keychain's hidden prompt (`security add-generic-password ... -w` with nothing after `-w` asks for the value; to replace an item add `-U`):
+  1. `security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-bot-token -w` (paste the token @BotFather gave you)
+  2. send `/start` to your bot in Telegram, then `python scripts/alert_bot.py --find-chat-id` (prints the chat id, never the token; no curl with the token in the address)
+  3. `security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-chat-id -w` (type the id at the prompt)
+  4. `security add-generic-password -a "$USER" -s ukraine-air-alerts.ukrainealarm-token -w` (paste the Ukraine Alarm token)
+  `python scripts/alert_bot.py --check` then reads each item once (macOS may ask whether `security` may use it: choose **Always Allow**, in Terminal, before installing the job; an unattended job cannot answer that question).
+- **The hourly job:** `bash scripts/install_hourly.sh` writes `~/Library/LaunchAgents/local.ukraine-air-alerts.hourly.plist` (every hour at minute 7; only PATH in its environment; no secret anywhere in it) and loads it; it refuses if the config is wrong or a keychain item is missing. Each run: `predict.py --now --token-from-keychain`, then the bot, then nothing else (if the forecast fails the bot is skipped). Its log, `~/Library/Logs/ukraine-air-alerts/hourly.log`, has two lines per run: the step and its exit code, and the bot's status line (counts and HTTP codes). The forecast table and everything else the two programs print are dropped. `bash scripts/uninstall_hourly.sh` removes the job; `--delete-secrets` also deletes the three keychain items. **Sleep:** launchd does not skip a run that falls into sleep, it runs the job once when the Mac wakes (not once per missed hour); after a long sleep that run only records where each oblast stands, as above.
+- **Flags:** `--test` sends one test message (no forecast); `--dry-run` prints what would be sent and changes nothing; `--check`; `--find-chat-id`; `--config`, `--forecast`, `--state` for other files.
+- **Tests:** `python scripts/check_alert_bot.py` (offline, about a minute): the config and its mistakes; the message in summer and winter; the rule in every case above; the bot over real HTTP against a fake Telegram (sent once, never twice, retried after a 500, a stale forecast, missing keychain items, a wrong chat id or token, no server at all, `--test`, `--find-chat-id`, `--check`, `--dry-run`); that no output, log, state file, page, plist or keychain call contains a secret and that the keychain is only ever asked with a bare `-w`; the hourly job's order and logging; the plist; the install and uninstall scripts with a fake `launchctl` and a fake keychain; and the whole chain (fake Ukraine Alarm API, `predict.py --now` with the token from the fake keychain, `last_forecast.json`, the bot, the fake Telegram). Breaking the rule or printing the Telegram address makes it fail. **Not tested here:** the real Telegram, the real keychain and launchd (this machine has none); the first run on your Mac is the test of those.
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -748,6 +766,7 @@ python scripts/check_combined.py
 python scripts/train_v2.py
 python scripts/build_geo.py PATH_TO_ne_10m_admin_1_states_provinces.geojson
 python scripts/check_forecast_map.py
+python scripts/check_alert_bot.py
 python scripts/check_gdelt_events.py
 python scripts/news_correlation.py
 python scripts/evaluate_news.py
@@ -775,6 +794,7 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/train_v2.py`: v2 on the combined dataset, compared with frozen v1 on 2026-09-28 to 10-17, the decision rule applied -> results/v2/ and models/v2/ (the design is in PROCESS_LOG.md, Round 16; takes a few minutes)
 - `python scripts/build_geo.py FILE`: Natural Earth admin-1 -> data/geo/ukraine_oblasts.geojson (source, licence and pinned SHA-256 in data/geo/README.md; the output is committed, so this is only needed to rebuild it)
 - `python scripts/check_forecast_map.py`: the oblast name match, the geometry, the page and its colours (offline, seconds)
+- `python scripts/check_alert_bot.py`: the alert bot, the keychain helper, the hourly job and the launchd scripts against fakes (offline, about a minute)
 - `python scripts/score_predictions.py`: the live forecasts in data/predictions/log.csv against the API archive (`--write` -> results/live_forecast_scores.md); every `predict.py --now` run appends to that log
 - `pip install translitua`: the one package the upstream parser needs (only for `source_check.py`)
 - `python scripts/source_check.py`: the unmodified upstream parser on the source channel's posts against our csv -> results/source_check.md (downloads four small upstream files from GitHub)
@@ -863,7 +883,9 @@ data/combined/         the combined official + API dataset (MANIFEST.md committe
 models/v2/             the v2 production model (written by scripts/train_v2.py, not committed)
 results/v2/            v2 against frozen v1: tables, bootstrap, calibration, decision.json
 data/geo/             oblast outlines for the forecast map (Natural Earth, public domain; README.md has the source and licence)
-output/               forecast_map.html, written by scripts/predict.py (not committed)
+output/               forecast_map.html, last_forecast.json (written by scripts/predict.py) and alert_state.json (the bot's memory); not committed
+config/alert_bot.conf  the alert bot's watch list and thresholds (no secrets; they are in the keychain)
+scripts/fakes/        fake Telegram, Ukraine Alarm API and keychain for the offline tests
 docs/api/             the API's swagger json
 data/telegram/       public posts of t.me/s/kpszsu (the Telegram experiment)
 models/              fitted by scripts/evaluate.py for scripts/predict.py (gitignored)

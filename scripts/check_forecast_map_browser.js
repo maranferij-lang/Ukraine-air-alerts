@@ -75,6 +75,15 @@ const rd = async p => p.evaluate(() => JSON.parse(document.getElementById('data'
   ok(sel.pressed === 'true' && sel.selD && sel.selVis === 'visible' && sel.live.includes(u.name), 'click selects: aria-pressed, the selection outline on the right shape, the screen-reader text');
   ok(sel.bars.length === 3 && sel.bars.every((b, i) => { const h = [1, 3, 6][i]; return +b.h === h && Math.abs(parseFloat(b.w) - u.p[h] * 100) < 0.01 && Math.abs(parseFloat((b.tick.match(/calc\(([\d.]+)%/) || [0, 'x'])[1]) - D.thr[h] * 100) < 0.01 && b.val.startsWith(u.pc[h]); }) && sel.bars[0].on,
     'three bars for 1 / 3 / 6 h: width = probability, threshold tick at the threshold, value with triangle, the chosen horizon marked');
+  // a probability within one point of the threshold shows one decimal too, so "25%" never looks below a "25.2%" threshold
+  const nearU = D.units.find(x => x.iso === 'UA-71'), farU = D.units.find(x => x.iso === 'UA-59');
+  await p.click('.u[data-iso="UA-71"] path');
+  const nearTxt = await p.textContent('#thr'), t1 = D.thrPc['1'];
+  ok(nearTxt.includes((nearU.p['1'] * 100).toFixed(1).replace('.', D.dec) + '%') && nearTxt.includes(t1) && nearTxt.startsWith('\u25b2'), `an oblast right at its threshold: the chip shows both with one decimal ("${nearTxt}")`);
+  await p.click('.u[data-iso="UA-59"] path');
+  const nearTxt2 = await p.textContent('#thr');
+  ok(nearTxt2.startsWith('\u25bd') && nearTxt2.includes(t1) && nearTxt2.includes((farU.p['1'] * 100).toFixed(1).replace('.', D.dec) + '%'), `an oblast just below its threshold: "${nearTxt2}"`);
+  await p.click('.u[data-iso="UA-63"] path');
   await p.click('.brow[data-h="6"]');
   ok(await p.evaluate(() => document.body.dataset.h === '6' && document.querySelector('#big .bignum').textContent) === u.pc['6'].slice(0, -1), 'clicking a bar switches the horizon (map, control and big number)');
   await p.click('#back');
@@ -129,7 +138,7 @@ const rd = async p => p.evaluate(() => JSON.parse(document.getElementById('data'
   p = await open('uk_live_4.html', 1440, 900); D = await rd(p);
   const decimals = async () => p.evaluate(() => {
     const t = [document.body.innerText, ...[...document.querySelectorAll('[aria-label],[title]')].map(e => (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')), ...[...document.querySelectorAll('svg title')].map(e => e.textContent), document.getElementById('live').textContent].join(' | ');
-    return (t.match(/.{10}\d\.\d.{6}/g) || []);
+    return (t.match(/.{10}\d\.\d+(?!\d*%).{6}/g) || []);
   });
   let dec = [];
   for (const h of [1, 3, 6]) { await p.click(`#seg button[data-h="${h}"]`); dec = dec.concat(await decimals()); }

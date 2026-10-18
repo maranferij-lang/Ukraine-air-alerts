@@ -51,7 +51,7 @@ TOKENS = dict(  # the one dark theme: surfaces, text, accents, status colours, t
 WIDTH, MARGIN, TOP_PAD = 900, 14, 64
 COS_LAT = 0.66
 TEMPLATE = Path(__file__).resolve().with_name("forecast_map_page.html")
-JS_TEXTS = ["ui_ago", "ui_fresh_live", "ui_stale", "ui_top_title", "ui_top_sub", "ui_all", "ui_back", "ui_big_cap", "ui_thr_above", "ui_thr_below", "ui_bars", "ui_bars_legend",
+JS_TEXTS = ["ui_ago", "ui_fresh_live", "ui_stale", "ui_top_title", "ui_top_sub", "ui_all", "ui_back", "ui_big_cap", "ui_thr_above", "ui_thr_below", "ui_thr_above_near", "ui_thr_below_near", "ui_bars", "ui_bars_legend",
             "ui_alert_yes", "ui_alert_no", "ui_hist_title", "ui_hist_n", "ui_hist_none", "ui_hist_replay", "ui_hist_thr", "ui_nodata_detail", "ui_rank", "ui_seg_item",
             "ui_rel_above", "ui_rel_below"]  # the texts the page's script needs, in the page's language
 
@@ -155,6 +155,11 @@ def render(payload, features=None):
     def pct(p):
         return f"{100 * p:.0f}%"
 
+    dec = "," if lang == "uk" else "."
+
+    def pct1(p):  # thresholds with one decimal ("25,2%"), so a probability shown as 25% never looks below a 25% threshold
+        return f"{100 * p:.1f}".replace(".", dec) + "%"
+
     def tri(p, h):
         return "\u25b2" if p >= thr[h] else "\u25bd"
 
@@ -221,7 +226,7 @@ def render(payload, features=None):
               f'<span class="chip"><b>\u25b2</b> {T("pg_lg_above", lang)}</span><span class="chip"><b>\u25bd</b> {T("pg_lg_below", lang)}</span>'
               f'<span class="chip"><b class="bd">!</b> {T("pg_lg_alert", lang)}</span>')
     seg = "".join(f'<button type="button" role="radio" data-h="{h}" aria-checked="{"true" if h == 1 else "false"}" tabindex="{0 if h == 1 else -1}">{T("ui_seg_item", lang, H=h)}</button>' for h in HORIZONS)
-    thr_txt = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=100 * thr[h]) for h in HORIZONS))
+    thr_txt = T("pg_thr", lang, thr=", ".join(T("pg_thr_item", lang, h=h, v=pct1(thr[h])) for h in HORIZONS))
     warn = tuple(T("pg_warn_prefixes", lang)) + ("!",)
     notes = list(payload["notes"])
     banner = "".join(f"<p>{esc(n.lstrip('!'))}</p>" for n in notes if n.startswith(warn))
@@ -243,7 +248,7 @@ def render(payload, features=None):
     table = (f"<h2>{T('pg_h2', lang)}</h2><table><thead><tr>{''.join(f'<th>{esc(c)}</th>' for c in th)}</tr></thead><tbody>{''.join(tr)}</tbody></table>")
     history = payload.get("history")
     data = dict(lang=lang, h=1, mode=mode, made=f"{made.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}", origin=f"{origin.tz_convert('UTC'):%Y-%m-%dT%H:%M:%SZ}",
-                thr={str(h): thr[h] for h in HORIZONS}, thrPc={str(h): pct(thr[h]) for h in HORIZONS}, edges=EDGES, units=data_units, history=history, thrText=thr_txt,
+                thr={str(h): thr[h] for h in HORIZONS}, thrPc={str(h): pct1(thr[h]) for h in HORIZONS}, dec=dec, edges=EDGES, units=data_units, history=history, thrText=thr_txt,
                 S={k: S[k][lang] for k in JS_TEXTS})
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     page = TEMPLATE.read_text(encoding="utf-8")
