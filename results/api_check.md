@@ -3,17 +3,17 @@
 Source compared against our official data: **the Ukraine Alarm API** (`api.ukrainealarm.com`, `GET /api/v3/alerts/dateHistory`, a different source from the official Telegram channel behind our csv). Produced by `scripts/api_check.py`, offline, from the saved API answers.
 
 ## What was compared
-- API days saved: 74 (2026-08-06 to 2026-10-18 UTC), 0 missing in between; SHA-256 prefix of the files in date order: `82fd45046b0459af`.
+- API days saved: 74 (2026-08-06 to 2026-10-18 UTC), 0 missing in between; SHA-256 prefix of the files in date order: `16c8ce13d0fb4860`.
 - Hours compared: the UTC days with a file, minus the official feed's outage [2026-08-29, 2026-09-03) and everything from 2026-09-06 00:00 UTC (the official data's trusted end): 624 hours x 24 oblasts = 14976 oblast-hours.
 - Rules applied to the API alerts: only alertType `AIR`; district (`... район`) -> raion row (name transliterated, must be one of our 118 raions; one known rename: Sheptytskyi = our Chervonohradskyi); `м. Київ` and `... область` -> oblast-level row; hromada-level rows are dropped, as `src/panel.py` does; oblast under alert when at least half of its raions are (the same fixed raion list); restarts within 5 minutes joined. The official side goes through the same code.
 
 ## What the API rows were turned into
-- api rows: 40527
-- after joining the days' files: 37380
+- api rows: 40619
+- after joining the days' files: 37472
 - not AIR (dropped): 312
-- still open or without an end (dropped): 80
-- raion rows: 35289
-- oblast-level rows: 445
+- still open or without an end (dropped): 61
+- raion rows: 35398
+- oblast-level rows: 447
 - hromada-level rows dropped: 1254
 - oblast-level rows for oblasts not in our data: 0
 - districts not in our raion list (dropped): 0 rows, 0 names

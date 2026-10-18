@@ -8,12 +8,14 @@ Nothing is trained. The splice points are documented in docs/DETAILS.md ("The co
 
 Rows, in the schema of the official file plus `source`:
   official   official rows that END at or before the splice instant T = 2026-08-29 00:00:00 UTC (hromada rows included; the rule ignores them)
-  api        API rows (alertType AIR, closed, our 24 oblasts; district -> raion row, "м. Київ" -> oblast row; hromada rows do not exist on this side) that END after T.
+  api        API rows (alertType AIR, our 24 oblasts; district -> raion row, "м. Київ" -> oblast row; hromada rows do not exist on this side) that END after T.
              An alert that started before T and was still running at T therefore comes from the API, with the API's start. The official rows that span T are not used
              (the feed broke on the day after; its rows that reach into 2026-08-29 are the last ones before the outage).
   api_patch  the API's raion rows of Chernihivska and Kyivska oblast that START between 2026-08-19 19:00 and 2026-08-20 12:00 UTC: a wave the official feed does not have
              (results/api_check.md). Added on top of the official rows (a few official rows of the same wave exist; episodes are unions, so an overlap changes nothing).
-Luhansk (permanent alert) is left out as in src/dataset.load_inputs. Alerts that were still running when the API was last fetched (no end) are left out, as in the forward test.
+Luhansk (permanent alert) is left out as in src/dataset.load_inputs.
+The cut (CUT = 2026-10-18 00:00 UTC, i.e. 2026-10-17 23:59:59 is the last second in): API rows that start at or after CUT are ignored, and an end after CUT (also the end of an alert that was still running when the archive was fetched, which has none) is clipped to CUT.
+An alert running at the cut is therefore a row that ends at the cut; only origins up to the cut are ever used with it, and a forecast at t only needs what is known at t.
 """
 import hashlib
 import sys
@@ -30,7 +32,8 @@ from src.dataset import load_inputs
 SPLICE = pd.Timestamp("2026-08-29", tz="UTC")
 PATCH_OBLASTS = ["Chernihivska oblast", "Kyivska oblast"]
 PATCH_FROM, PATCH_TO = pd.Timestamp("2026-08-19 19:00", tz="UTC"), pd.Timestamp("2026-08-20 12:00", tz="UTC")
-TRUSTED_END = pd.Timestamp("2026-10-18 06:00", tz="UTC")  # the archive covers every alert that started by here (same as the forward test)
+CUT = pd.Timestamp("2026-10-18 00:00", tz="UTC")  # everything is cut here (all of 2026-10-17 UTC is in): rows that start later are ignored and ends are clipped to this instant,
+#                                                   so the file does not depend on when the archive was last refreshed
 ARCHIVE = ROOT / "data" / "api_archive" / "date_history"
 OUT_DIR = ROOT / "data" / "combined"
 COLUMNS = ["oblast", "raion", "hromada", "level", "start", "end", "source"]
@@ -41,8 +44,11 @@ def build_combined(archive=ARCHIVE):
     official, raions = load_inputs()                     # cleaned official rows without Luhansk, fixed raion list
     oblasts = sorted(official["oblast"].unique())
     files = day_files(archive)
-    api, _, dropped = to_official_rows(load_api(files), raions)
-    api = api[api["oblast"].isin(oblasts)]
+    api, _, dropped = to_official_rows(load_api(files), raions, keep_open=True)    # running alerts have end = 2100-01-01 here
+    api = api[api["oblast"].isin(oblasts)].drop(columns="regionId")
+    n_after_cut = int((api["start"] >= CUT).sum())
+    n_clipped = int(((api["start"] < CUT) & (api["end"] > CUT)).sum())
+    api = api[api["start"] < CUT].assign(end=lambda d: d["end"].clip(upper=CUT))
 
     keep_off = official["end"] <= SPLICE
     keep_api = api["end"] > SPLICE
@@ -54,7 +60,9 @@ def build_combined(archive=ARCHIVE):
         "official rows kept (end at or before the splice)": int(keep_off.sum()),
         "official rows dropped, spanning the splice (start before, end after)": len(span_off),
         "official rows dropped, started at or after the splice": int((official["start"] >= SPLICE).sum()),
-        "api rows (closed AIR, our oblasts)": len(api),
+        "api rows (AIR, our oblasts) that start before the cut": len(api),
+        "api rows ignored, start at or after the cut": n_after_cut,
+        "api rows whose end was clipped to the cut (running or ending after it)": n_clipped,
         "api rows kept (end after the splice)": int(keep_api.sum()),
         "api rows not used (end at or before the splice: the official side has them)": int((~keep_api).sum()),
         "api_patch rows": len(patch),
@@ -102,7 +110,7 @@ def main():
              "The rules and every splice point are in `docs/DETAILS.md`, \"The combined dataset\"; `results/combined_splice_check.md` has the checks.", "",
              f"- splice instant T: {SPLICE:%Y-%m-%d %H:%M:%S} UTC (official before, API after)",
              f"- patch: API raion rows of {', '.join(PATCH_OBLASTS)} starting {PATCH_FROM:%Y-%m-%d %H:%M} to {PATCH_TO:%Y-%m-%d %H:%M} UTC",
-             f"- trusted end of the API side: {TRUSTED_END:%Y-%m-%d %H:%M} UTC (rows that start later are in the file but the archive is complete only up to here)",
+             f"- the cut: {CUT:%Y-%m-%d %H:%M} UTC (rows that start later are not in the file; ends are clipped to it)",
              f"- rows: {len(df)}; first start {df['start'].min()}; last start {df['start'].max()}; last end {df['end'].max()}",
              f"- `alerts_combined.csv`: {len(data)} bytes, SHA-256 `{sha(data)}`",
              "- inputs (SHA-256 prefix):", *[f"  - `{k}`: `{v}`" for k, v in inputs.items()], "",

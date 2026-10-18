@@ -71,7 +71,7 @@ def to_official_rows(api, raions, keep_open=False):
     raion_oblast = raions.set_index("raion")["oblast"]
     oblast_names = set(raions["oblast"]) | {"Kyiv City"}
     n = {"api rows": len(api)}
-    api = api.drop_duplicates(["regionId", "start", "end", "type"]).sort_values("end")
+    api = api.drop_duplicates(["regionId", "start", "end", "type"]).sort_values("end", kind="stable")
     api = api.drop_duplicates(["regionId", "start", "type"], keep="last")  # the same alert in two days' files: keep the later end
     n["after joining the days' files"] = len(api)
     air = api[api["type"] == "AIR"]

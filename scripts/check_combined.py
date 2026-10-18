@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from scripts.build_combined import SPLICE, TRUSTED_END, build_combined
+from scripts.build_combined import CUT, SPLICE, build_combined
 from scripts.check_no_peeking import known_at, same
 from scripts.forward_test import build_api
 from src.dataset import HORIZONS, build_rows, load_inputs
@@ -73,7 +73,7 @@ def main():
     f_o = build_features(rows_o, ep_o, raw_o, neighbours, HORIZONS, oblasts)                        # the old pipeline: official mask on
     rows_a, ep_a, raw_a, f_a, api_rows, _, _, files = build_api([])                                  # the forward test's: API only, no mask
     cr = comb[["oblast", "raion", "hromada", "level", "start", "end"]]
-    rows_c, ep_c, raw_c, first_c, end_c = build_rows(cr, raions, first=first_o, end=TRUSTED_END)
+    rows_c, ep_c, raw_c, first_c, end_c = build_rows(cr, raions, first=first_o, end=CUT)
     f_c = build_features(rows_c, ep_c, raw_c, neighbours, HORIZONS, oblasts, outages=[])             # combined: no mask
 
     L = ["# The combined dataset: do features behave the same at the splice?", "",
