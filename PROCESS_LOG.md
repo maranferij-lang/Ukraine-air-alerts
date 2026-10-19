@@ -1771,3 +1771,777 @@ No model, data or result changes: `results/` byte-identical.
 - **Not checked this round:** Python 3.9 and a Mac (nothing in `plot_timeline.py` is version-specific, but I did not run it
   there); the figure may differ by a few pixels across matplotlib versions, as the other figures do.
 - **Time:** started 17:27 UTC, committed locally 17:31, tests finished 17:45, pushed before 18:10, inside the limit.
+
+---
+
+## 2026-10-18 — Round 14 (branch `live`, from main): alerts.in.ua API. IN PROGRESS, stopped after step 1
+
+**Request (user):** work on a new branch `live` from main (main stays as submitted). Step 1 read the API docs; step 2 consistency
+check against our official panel (stop and show after it); step 3 forward test on data after Sep 7 with the frozen round-13
+models; step 4 `predict.py --now` on live data. The user supplied an API token. Rules for it: never print it, never write it to a
+file, never put it in a commit, a log line or an error message; on a failed request print the status code only.
+
+### How the token was handled
+- It is not in any file, commit or this log. A scratch relay outside the repo (`alerts_relay.py` in the session scratchpad)
+  took it once from its process environment, kept it in memory only, sent it as an `Authorization: Bearer` header (never in a URL),
+  paced requests to the documented limits, and answered errors with the status code only. It was stopped after the probe below.
+- Unavoidable: the token was typed in the chat and passed once in the command that started the relay, so it is in the session
+  transcript (and in any export of it, see `ai-log` on that branch: that file was written before the token and does not contain it;
+  do not regenerate it without removing the token first).
+
+### Step 1: what the docs say (https://devs.alerts.in.ua/, read 2026-10-18)
+- **Active alerts:** `GET /v1/alerts/active.json`: regions with an alert or any other threat now (fields: location title and uid, type
+  oblast/raion/city/hromada, `started_at`, `alert_type`, `alert_level` red/yellow, `threats`).
+- **History:** only `GET /v1/regions/{uid}/alerts/{period}.json`, and the only documented `period` is **`month_ago`**: one month back
+  from the current date. No date-range parameters. `uid` may be an oblast, raion or hromada. Alert fields: `started_at`, `finished_at`
+  (null while running), `location_type`, `location_uid`, `location_oblast(_uid)`, `location_raion`, `alert_type` (air_raid,
+  artillery_shelling, urban_fights, chemical, nuclear), `notes`.
+- **Consequence for the plan:** today is 2026-10-18, so the history reaches back to about 2026-09-18. It does **not** cover late Aug / early Sep
+  (step 2's overlap with our official data, which ends 2026-09-07), nor Sep 7 to Sep 18 (step 3's start). Unless the endpoint returns more
+  than documented (not tested: see below), step 2 as specified cannot be run and step 3 can only start around Sep 18, with a gap
+  Sep 7 to Sep 18 between our data and the API's.
+- **Rate limits:** general soft 8–10 requests a minute and hard 12 per IP (429 above; systematic abuse gets IP and token blocked);
+  **history 2 requests a minute**. `If-Modified-Since` caching allowed. A public service must proxy; the token must not be in client code.
+- **Region ids:** oblasts have uids 3–31 (e.g. 22 Kharkivska, 14 Kyivska, 31 Kyiv City as its own unit; Crimea 29, Sevastopol 30, Luhansk
+  16). The full list (public Google Sheet linked from the docs) has 1,622 locations: 25 oblasts, 2 special cities, 126 raions, 1,469
+  hromadas, each with a uid. Our 24 units map one to one to oblast uids by name; the mapping still has to be written down and checked.
+- **Raion and hromada level:** present in the schema (`location_type`), and uids exist for all of them; whether the history of an oblast uid
+  returns raion/hromada alerts (needed for the half-of-raions rule) or only oblast-level ones is not documented and is untested.
+- Also: IoT endpoints (`/v1|v2/iot/...`) give the current state as a compact string (A all oblast, P partial, N none); no history.
+  The service is volunteer-run, says it uses the official API, the Telegram channel and regional sources, and warns of delays.
+
+### Step 1 result of the probe: the token was refused
+- One request to `/v1/alerts/active.json` with the supplied token returned **HTTP 401** (documented as: token missing, wrong, revoked or
+  expired). No retries and no guesses at variants (the docs warn that systematic misuse gets a token blocked). Nothing about the data
+  itself is tested yet: that the history is limited to one month, what level it returns and how current it is are from the docs only.
+
+### State
+Nothing run on data, no code added; this entry is the only change on `live` so far (uncommitted). Steps 2–4 not started. Waiting for the user.
+
+### Update (same day, later): the token was for a different service; alerts.in.ua dropped
+- **Correction from the user:** the token belongs to the **Ukraine Alarm API** (`api.ukrainealarm.com`), not to alerts.in.ua. So the 401
+  above was the wrong service rejecting a key it never issued, not a bad or expired token. The alerts.in.ua work is dropped (it never got
+  past reading its docs); the entry above stays as the record of it.
+- **New plan (same four steps, adapted):** (1) read the swagger: endpoints, auth format, region ids vs our oblasts, raion level, rate
+  limits, and above all how far back history goes, tested with as few calls as possible; (2) if history reaches late Aug / early Sep, a real
+  consistency check against the official data (same idea as `source_check`), otherwise a sanity check only (alerts and starts per day per
+  oblast vs August) and a plain statement that there is no overlap; (3) forward test of the frozen round-13 models from the first hour with
+  full feature history, reported separately with the source named; (4) `scripts/archive_api.py` saving the API data daily into
+  `data/api_archive/`; (5) `predict.py --now` on live data. Stop and show after step 2. The token is read only from the environment
+  variable `UA_ALARM_TOKEN`, never from a command line, never printed.
+- **Blocked at the start, nothing run on data:**
+  1. `UA_ALARM_TOKEN` is **not set** in this session's environment (checked for presence only; no other variable with a matching name
+     either). Environment variables are read when a session starts, so it needs to be added in the environment's settings and a new
+     session started.
+  2. **The API host is behind a Cloudflare browser challenge from this sandbox.** `https://api.ukrainealarm.com/swagger/index.html`,
+     `/swagger/v1/swagger.json` and an unauthenticated `/api/v3/regions` all answered HTTP 403 with a "Just a moment..." page
+     (`server: cloudflare`), i.e. a bot challenge before any token check. It is not known whether a request that carries a valid key is
+     let through from this IP; the user's own test (200) came from another network. I did not try to get around the challenge.
+- **So the swagger has not been read.** Nothing in this log about the Ukraine Alarm API's endpoints, limits or history depth is known yet;
+  I have not filled the gap from memory.
+
+### Update (later still): the pushed "swagger" is the Cloudflare challenge page
+- New setup from the user: I write the code, the user runs everything that touches the API on their own machine; the token stays there in
+  `UA_ALARM_TOKEN` and I never see it. The user pushed `docs/api/ukrainealarm_swagger.json` (commit 1aa8449) to `live`.
+- **That file is not the swagger.** It is 5,490 bytes of HTML whose title is "Just a moment..." (the Cloudflare browser challenge; same size
+  as the 403 pages I got from the sandbox). It is not valid JSON (the parse fails at character 0). So the endpoints, auth format, region
+  ids, raion level, rate limits and history endpoints are **still unknown**.
+- Not done on purpose: `scripts/api_probe.py` and `scripts/archive_api.py`. Their paths, parameters and response fields would be guesses,
+  and a probe that guesses the history call could waste rate-limited requests or save the wrong thing. They are written once the real
+  swagger is here. The wrong file is left in place for the user to replace (it is their commit).
+
+### Update (2026-10-18, later): the real swagger is in; scripts written, nothing run against the real API
+**Setup:** Cloudflare challenges this sandbox, so I write the code and the user runs everything that touches the API on their own Mac,
+with the token in `UA_ALARM_TOKEN` in their shell. I never see it. The user replaced `docs/api/ukrainealarm_swagger.json` with the real
+swagger (OpenAPI 3.0.4, "Ukraine Alert API" v3, by Stfalcon; commit d7db329).
+
+**What the swagger says** (read from the file; nothing here is measured yet)
+- **Auth:** one `apiKey` scheme named `Token`: header `Authorization`, whose value is the token itself (no `Bearer` prefix is stated); applies to
+  every endpoint. Base URL is not in the file; the host is `https://api.ukrainealarm.com`, paths start `/api/v3`.
+- **Endpoints:** `GET /alerts` (regions with an alert now, with `activeAlerts` and levels Red/Yellow), `GET /alerts/{regionId}` (one region now),
+  `GET /alerts/status` (a "last action" counter for cheap change detection), `GET /alerts/dateHistory?date=YYYYMMDD`,
+  `GET /alerts/regionHistory?regionId=` ("the last 25 alerts of a region"), `GET /regions` (the id tree), `GET /geo-data`, `/geo-data/all`,
+  `POST /geo-data/check-coordinates`, and `POST/PATCH/DELETE /webhook` (push on new alerts and all-clears).
+- **History endpoints:** `dateHistory` (one calendar day per call; the date parameter's example is `20220224`, which is only an example, not a
+  statement of depth) and `regionHistory` (only the last 25 alerts of one region: no use for depth). Records (`AlertDurationResponse`):
+  `regionId`, `regionName`, `startDate`, `endDate`, `duration`, `alertType`, `isContinue`. Not stated: the time zone of the dates, whether a day
+  means "alerts that started that day" or "alerts active that day", and what a date before the start of the history returns.
+- **Alert types** include non-air ones: `UNKNOWN, AIR, ARTILLERY, URBAN_FIGHTS, CHEMICAL, NUCLEAR, INFO, CUSTOM`. A consistency check and any
+  forward test must keep `AIR` only (to be confirmed against the official feed's meaning).
+- **Region ids:** strings. `/regions` returns a tree `states -> regionChildIds -> ...` with `regionType` in `State, District, Community,
+  CityOrVillage, CityDistrict, Null`; names are Ukrainian (`regionName`); `/alerts` also carries `regionEngName`. The history records have only
+  `regionId` and `regionName` (no type, no parent): the level has to be looked up in the `/regions` tree.
+- **Raion level:** the id tree has districts and communities, so the model data exists in principle; **whether `dateHistory` returns
+  district/community-level records (needed for the half-of-raions rule) or only state-level ones is not in the swagger.** The probe counts it.
+- **Rate limits:** none stated anywhere in the file (no 429 documented either). The client keeps at least 2.5 s between calls, waits and
+  retries on HTTP 429 (Retry-After if given), and the archive stops after repeated 429.
+- **How far back history goes:** not stated. That is the key question for the consistency check, and it is what the probe measures.
+
+**Written (all on `live`; run only offline against a fake server so far)**
+- `src/ukrainealarm.py`: small stdlib client (Python 3.9 compatible). Token only from `UA_ALARM_TOKEN`, sent as the `Authorization` header,
+  never printed, logged or saved; every failure is reduced to a status code (no response text, no exception message); 0 = no connection,
+  598 = HTTP 200 but not JSON (for example a challenge page). `UA_ALARM_BASE` exists for tests and may only point at the real API or at
+  `http://127.0.0.1` (the token must not go elsewhere). Also the Ukrainian-name -> our-oblast-name mapping (25 names; Crimea and Sevastopol are
+  not in our data) and `region_index()` (id -> name, type, state).
+- `scripts/api_probe.py`: about 20-25 requests: `/regions` (counts by level, how many of our 25 oblasts are matched by name, the unmatched names),
+  `/alerts/status`, `/alerts`, one `regionHistory` (Kharkivska), then `dateHistory` for a ladder of dates (2022-02-24, 2023-01-01, 2024-01-01,
+  2025-01-01, 2025-07-01, 2026-01-01, 2026-06-01, 2026-08-15, 2026-08-31 (inside our official feed's outage), 2026-09-05, yesterday) and, if the
+  oldest ones are empty, a bisection to the first date with data. Per date: status, items, ids by level, alert types, `isContinue`, earliest and
+  latest raw start strings, whether the strings carry a time zone, how many starts fall on / before / after the requested day (UTC). Prints a
+  `PROBE SUMMARY` block that is safe to paste; raw answers go to `data/api_raw/` (added to `.gitignore`; the user decides what to commit).
+- `scripts/archive_api.py`: daily mode saves `/regions` (only when changed), `/alerts` (a timestamped snapshot) and `dateHistory` for the last 3
+  days (refetched each run because a running alert gets its end later); `--from/--to` backfills a range and is resumable (existing files older
+  than 3 days are skipped). Files go to `data/api_archive/` as the API sent them, plus `log.csv` (time, endpoint, date, status, items, bytes). A new empty answer
+  never replaces a file that has alerts. Stops on 401/403 and after repeated 429.
+
+**Tests (offline, a fake local API with a history cutoff at 2023-03-10, a one-time 429, and a check of the Authorization header):**
+the probe found the cutoff exactly by bisection (24 requests, the 429 handled); the archive wrote daily, backfill and resume as intended, a wrong
+token stopped it with "HTTP 401" and a missing token or a foreign `UA_ALARM_BASE` was refused; the fake token appears in no output and no file,
+and the fake server's reply to a wrong token (which echoed the header) never reached an output either. The test outputs were deleted.
+**Not tested:** anything against the real API: the real response shapes (field names come from the swagger only), the real name mapping, the
+real history depth, the real rate limit.
+
+**Open:** the probe output from the user's Mac decides the consistency check (a real overlap with the official data or a sanity check only) and
+the forward test.
+
+### Update (2026-10-18, later): probe output from the user's Mac, and a first real consistency check (one day)
+**Probe result (user's run, 43 requests, 21 of them HTTP 429; token never seen):**
+- `/regions`: 1,606 nodes, 29 states, **25 of our 25 oblasts matched by name** (the name map in `src/ukrainealarm.py` works).
+- **History depth:** `dateHistory` returns data from **2025-10-03** (2025-10-02 and everything before it is empty, HTTP 200 with 0 items; the
+  bisection is exact if the data is continuous). About one year back, so it **does** cover our late-Aug / early-Sep overlap, the official feed's
+  outage (2026-08-31: 494 items) and everything after the feed's end (2026-09-07 to today).
+- **Rate limit:** real. 21 of 43 requests got 429 at the 2.5 s pacing (the probe did not record Retry-After). Fixed in `src/ukrainealarm.py`:
+  the pace now starts at 6 s, honours Retry-After, slows down after a 429 (x1.5, at most 60 s) and speeds up again after 10 clean calls; the probe
+  and the archive print the Retry-After values and the final gap. Tested offline only (a 429 with Retry-After 1 s raised the gap, 10 clean calls lowered it).
+- **What a day file is:** `dateHistory` for a UTC day returns every alert that was **active** on that day: on 2026-08-15, 399 items, 362 started on
+  the day and 37 the day before, none after; the latest end seen was 2026-08-16. Times are UTC with a `Z` and microseconds; `isContinue` was false for all.
+- **Levels:** on 2026-08-15, 20 State, 369 District and 10 Community items (the same shape on 08-31, 09-05, 10-17). Looking at the saved day, the
+  State-level items are all `м. Київ` (no oblast-wide record for any other oblast): an oblast-wide alert comes as a set of districts, as in our own
+  rows. Communities are city hromadas (Kharkiv, Nikopol, Zaporizhzhia). Alert types: AIR 396, ARTILLERY 3 (09-05 also one URBAN_FIGHTS).
+- **Mapping without the region tree:** all 82 district names of that day turn into one of our 118 raion names with `translitua` (the package the
+  upstream parser uses): 82 of 82, and each of our raion names belongs to one oblast, so the tree is not needed. Hromada-level records are dropped, as
+  `src/panel.py` already does.
+
+**`scripts/api_check.py` (new): the consistency check, same idea as `source_check.py`.** Offline, from the saved day files. Rules: AIR only;
+district -> raion row, `м. Київ` / `... область` -> oblast row, hromada dropped; the same 118-raion list, half of the raions, restarts under 5 minutes
+joined, the same `official_episodes` and `hourly_panel` code for both sides. Compares oblast-hours (under alert; a new alert starts in the hour),
+oblast episodes (start within 1 min / 5 min / 1 h) and raion alert rows (same raion, start within 5 s / 60 s, end within 60 s), on the days that
+have a file, outside the official outage and before the official trusted end. Writes `results/api_check.md`.
+- **First real run, one day (2026-08-15, the only day pushed):** oblast-hours 576 compared, **576 of 576 same "under alert", 576 of 576 same
+  "a new alert starts in the hour"**; oblast episodes 67 official / 67 API, 66 of 67 starts within 1 minute, 67 of 67 within 5 minutes; raion rows
+  336 / 336, **330 of 336 official rows have an API row of the same raion with a start within 5 s**. The 6 others are one batch (Kherson, Beryslav,
+  Skadovsk, Kakhovka, Henichesk raions at 01:16:04 and Bashtanka at 01:16:08 UTC) where the API's start is 98-133 s earlier. Of the 330 matched rows,
+  327 also have an end within 60 s; the other 3 (Lozova, Konotop, Dnipro raions) end 213-253 s earlier in the API.
+- **Controls (a copy of the day, not kept):** with 7 districts removed, 557 of 576 oblast-hours agree (episodes 57 vs 67); with every time shifted by
+  25 minutes, 536 of 576 (raion rows matched within 60 s: 1). So the comparison does react to differences.
+- **Caveats:** one day is not the late-Aug / early-Sep check; 576 oblast-hours is a small sample. The two sources are probably not independent (the
+  API says it takes the official channel among its sources); the agreement shows our rules are applied the same way to both and that the API's rows are
+  the same alerts, not that either is right about the real world. `results/api_check.md` as committed is this one-day run and is regenerated
+  when more days are saved.
+
+**Next, for the user to run:** a backfill into `data/api_archive/` (resumable) and commit it, then the check over the full late-Aug / early-Sep
+window (and, if we go on, the forward test from Sep 7). Nothing else was run against the real API by me. Step 3 (forward test) is not started:
+the user asked to stop after step 2.
+
+### Update (2026-10-18, later): the full consistency check, API vs official (step 2 done)
+**Input:** the user's backfill (`data/api_archive/`, commit df16ea6): 74 daily files 2026-08-06 to 2026-10-18, every call HTTP 200, 8.8 MB, 84 requests
+with 10 HTTP 429 (the client's pace had risen to 60 s by the end). Run: `python scripts/api_check.py` (offline, 4 s) -> `results/api_check.md`.
+
+**One mapping fix found by the check:** the API calls one raion "Шептицький район" (19 rows dropped as "not in our raion list"). Our list has 7 raions
+for Lviv oblast, six of which appear in the API under the same name; the seventh, "Chervonohradskyi raion", never appeared, and Sheptytskyi is the former
+Chervonohrad raion. Added `RAION_ALIASES = {"Sheptytskyi raion": "Chervonohradskyi raion"}` (`src/ukrainealarm.py`), applied in `api_check.py`.
+It changes one row's match and none of the oblast-hour numbers. This is an inference from the lists (plus the known renaming), not something the API states.
+
+**Result.** Compared hours: the 26 UTC days with a file inside the official data's trusted range (Aug 6-28 and Sep 3-5; the official outage
+[Aug 29, Sep 3) and everything from Sep 6 00:00 are excluded): 624 hours x 24 oblasts = **14,976 oblast-hours**.
+| | |
+|---|---|
+| same "under alert" | **14,942 of 14,976 (99.8%)**: official only 0, API only 34 |
+| same "a new alert starts in the hour" | **14,954 of 14,976 (99.9%)**: official only 7, API only 15, both 1,824 |
+| oblast episodes, official / API | 1,882 / 1,890; official starts matched by an API start within 1 min 1,866, 5 min 1,875, 1 h 1,882 (all) |
+| raion alert rows, official / API | 9,360 / 9,395; official rows with an API row of the same raion starting within 5 s 9,263, within 60 s 9,301; of those, end within 60 s: 9,218 of 9,301 |
+- **The disagreement sits on 3 days.** Aug 19 and Aug 20 hold 33 of the 34 "under alert" differences and 20 of the 22 start differences; Sep 5 holds
+  the other 1 and 2. Outside Aug 19-20 (1,152 oblast-hours removed): 13,823 of 13,824 agree on "under alert" and 13,822 of 13,824 on starts.
+- **Aug 19-20, what is different** (looked at, not explained): from about 20:52 UTC on Aug 19 the API has an alert in all 5 raions of Chernihivska oblast
+  (to 08:26-09:52 on Aug 20, one raion to 18:49) and in 7 raions of Kyivska oblast (to 05:37-10:31), plus Mykolaiv, Dnipropetrovsk, Cherkasy and
+  others for shorter times. **Our official data has no Chernihiv or Kyivska oblast alert at all in that period** (0 minutes active, 14 and 11 hours),
+  and no row starting in the 20:xx UTC hour of Aug 19 (0 rows, against 58 in the API; 46 official rows start in the 21:xx hour). So it looks like a gap
+  in the official feed (or its parsing) of about an hour at the start of that wave, and a missing wave for those two oblasts. I do not know which.
+  **This is inside our old test window** (Aug 19-20, 25 oblast-hours where the official target says "no alert" and the API says "alert"); the old test
+  is not changed and this is not fixed by editing data (`data/raw` stays as pulled).
+- **The official outage window:** the API days for [Aug 29, Sep 3) give 521 oblast episodes starting in it, in 22 oblasts: the API has data where the
+  official feed has none. Not compared with anything.
+- **Caveats (as before):** the two sources are probably not independent (the API says it takes the official channel among its sources), so this shows
+  that our rules produce the same oblast series from both and that the API is a usable substitute, not that either one is right about reality. The
+  API rows have `isContinue = false` everywhere in this period; 80 rows without an end and 312 non-AIR rows were dropped (as the report lists).
+- **Added to the report:** a table of the days with the most disagreeing oblast-hours (so the Aug 19-20 cluster is visible in the file).
+
+**Decision for the user:** go on to the forward test (step 3) or not; and whether the Aug 19-20 official gap should be recorded in the README / log as a
+known limitation of the old test (its effect is small: 34 of 14,976 hours, one event), which I have not touched.
+
+### Update (2026-10-18, evening): forward test prepared and diagnosed, NOT scored; Aug 19-20 limitation; the rename
+**User's decisions:** (1) forward test: go, frozen round-13 models and thresholds, no refit or retuning, score 2026-09-07 to 2026-10-17 (Oct 18 left out),
+features from the API archive only, same metrics as the old test (within-oblast AUC, Brier with decomposition, calibration, day-block bootstrap), own section, source
+named, "about 41 days, wide intervals", and **stop before scoring if the feature pipeline behaves differently on API data**; (2) put the Aug 19-20 gap into README and
+DETAILS as a known limitation of the old test, data untouched, plus a side note with those hours flipped; (3) Sheptytskyi is a real rename (Chervonohrad and its raion,
+renamed 2024): **stated as a fact now**, which supersedes the word "inference" in the earlier entry (the log is append-only; `src/ukrainealarm.py` says it as a fact).
+
+**Flag on the baselines (said before doing it, as CLAUDE.md asks):** the request listed "logit, freq4w, persistence" as the baselines. CLAUDE.md fixes the three baselines
+(same as now, same hour yesterday, train frequency), and the old test also showed the logistic regression. So the forward test reports **all** of them: the three
+baselines, the logistic model, and, as an extra, the rolling 4-week frequency (the model's `freq4w` feature used directly as a score; its threshold is also frozen, from the
+last train week). Nothing was left out.
+
+**Frozen artifacts (code changes; the old test's outputs are byte-identical):**
+- `scripts/evaluate.py` now also saves `models/frozen.json` (every F1 threshold it already computed, per predictor and H, plus the logistic weights, plus the freq4w
+  threshold). The old pipeline was rerun: `results/`, `figures/` and the saved LightGBM and frequency files in `models/` are **byte-identical** to before.
+- `src/features.build_features(..., outages=...)` and `src/dataset.build_rows(..., first=, end=)`: optional arguments, defaults unchanged (the official feed's outage,
+  the official data's own start and end).
+- `scripts/forward_test.py` (`--selftest`, `--diagnose`, `--score`). **Self-test passed:** the scoring code applied to the OLD official test rows with the frozen
+  artifacts reproduces every AUC, Brier, precision, recall and F1 cell of `results/test_table.csv` (target b, all 24 days) for LightGBM, logistic, same as now, same hour
+  yesterday and train frequency, at H = 1, 3, 6. It found one bug first: pandas' default CSV reader is off by 1 ulp on the saved frequency table, which moved 194 test rows
+  that tie exactly at the threshold (the thresholded metrics of the frequency baseline at H=1 differed); the table is now read with `float_precision="round_trip"`.
+
+**Diagnostics on API data (`results/forward_api/diagnostics.md`; run before scoring; no outcome of the forward rows compared with any prediction):**
+1. **The one real difference: the official outage mask.** `src/features.py` treats 2026-08-29..09-02 as unobserved (7-day windows over the observed part, scaled; freq4w
+   lags that touch it skipped). The API has data there (521 oblast episodes). With the mask left on, 1,555 forward rows (Sep 7-9) get different `share_7d` / `starts_7d`
+   (mean abs diff of starts_7d 2.67) and 4,206-6,121 rows (to Sep 30) a different `freq4w` (mean abs diff 0.14), and the frozen LightGBM's probability differs by more than
+   0.001 on 3,393 / 5,718 / 5,551 rows (H = 1 / 3 / 6; largest 0.083 / 0.146 / 0.150). The right setting for API data is **no mask**, which is what the code uses (`outages=[]`).
+   This is the thing the user asked me to stop on: it is a deliberate setting I would score with, not a surprise, but it is a choice and it is not in the old pipeline.
+2. **Same features from official and API on the same rows** (Aug 13-28, 9,216 rows; freq4w excluded, it needs 4 weeks of API history and the archive starts Aug 6): equal within
+   0.001 on all but a few dozen rows outside the Aug 19-20 wave (for example `now`, `nb_share_1h`, `nb_starts_6h`: 8,544 of 8,544; `starts_7d` 7,950; `share_7d` 7,698 of 8,544, the
+   rest are sub-second timing differences); correlations 0.989-1.000.
+3. **Leakage check on API rows:** features for 40 forward origins rebuilt from API rows cut at t: 37,440 values, 0 mismatches.
+4. **Gaps in the API:** episodes per day in the window min 59, median 104, max 172, no thin day, every oblast has episodes. Rows left out for having no end (`isContinue` true,
+   end 0001-01-01): 2 hromada rows from Sep 17 (not used by the rule) and 78 rows from Oct 18 09:51 (after the window).
+5. **Not a pipeline difference, but the forward period is a busier regime than the old test** (features and shares of origins, no model output): share of origins with a new alert in
+   (t, t+H]: H=1 0.121 -> 0.180, H=3 0.297 -> 0.414, H=6 0.432 -> 0.571; `now` 0.209 -> 0.288; `starts_7d` mean 20.2 -> 30.1. Against the training range: 221 forward rows (0.9%) have
+   `starts_7d` above the training maximum (81) and 40 have `starts_24h` above its maximum (16); every other feature stays inside it. So the frozen models see mostly familiar
+   inputs, but their probabilities were calibrated to a quieter level (expect the calibration to show it; nothing is retuned).
+
+**Scoring was not run on the API data.** `forward_test.py --score` exists (tables, calibration, day-block bootstrap, all baselines) and is ready; it waits for the user to
+confirm the no-mask setting and to say go.
+
+**Side note, Aug 19-20 (`scripts/sensitivity_aug19.py` -> `results/aug19_sensitivity.md`):** a patched copy of the official rows in a temporary folder (data/raw untouched) with the
+API's 18 raion rows of Chernihivska and Kyivska oblast for alerts starting Aug 19 19:00 to Aug 20 12:00 UTC added: **25 oblast-hours** flip from quiet to under alert (Chernihivska 14,
+Kyivska 11). The unmodified `evaluate.py` was run on the copy (same training rows, so the same models). Target (b), all 24 days, within-oblast AUC (Brier) old -> patched:
+LightGBM H=1 0.6879 -> 0.6910 (0.0875 -> 0.0875), H=3 0.6451 -> 0.6465 (0.1446 -> 0.1446), H=6 0.6394 -> 0.6396 (0.1398 -> 0.1396); the baselines move by at most 0.0024 in AUC and 0.0018 in
+Brier (same as now, same hour yesterday); train frequency by at most 0.0006. Base rate of a new alert: 0.1214 -> 0.1217 (H=1), 0.2957 -> 0.2965 (H=3), 0.4300 -> 0.4312 (H=6). The
+patched copy mixes the two sources (the API's alerts added to the official ones). No ordering of the model against the baselines changes.
+- **README and DETAILS:** one bullet in the README limitations (now six; the earlier "five" was a shape asked for in round 13, this one was asked for explicitly), a bullet in the Data
+  "Known problems" and in the full Limitations of DETAILS, and the new scripts in the run order. Links and anchors checked (0 problems); no code block has `#` or a backtick.
+
+**Open, for the user:** (a) confirm the forward test scores with **no outage mask** (recommended: the API observed those hours); (b) go for `--score`; (c) optional: the old-window
+equivalence test (the frozen models on API-source features for Aug 7-28) needs the API archive back to about Jul 1 (4 weeks of lags before Aug 7): one more backfill
+(`archive_api.py --from 2026-07-01 --to 2026-08-05`, about 36 days); not required for the forward test.
+
+### Decision (2026-10-18, before scoring): the forward test uses no outage mask; a masked run is reported as secondary
+**User's decision:** the forward test builds its features from the API archive **with no outage mask**. The mask in `src/features.py` exists only because the official feed had no data
+for 2026-08-29..09-02; the API does have data for those days, so masking would throw away observed data. The main result is therefore the unmasked one (`outages=[]`). As a side note
+the test is also scored once with the official mask switched on, reported next to the main result and labelled secondary (it is not the result).
+Also decided: baselines as in CLAUDE.md (same as now, same hour yesterday, train frequency) plus the logistic model and the rolling 4-week frequency as extras; thresholded metrics stay at the
+frozen thresholds; nothing is refitted or retuned; the Jul 1 - Aug 5 backfill is skipped for now.
+
+**Declared before scoring: how calibration-in-the-large and the Brier change will be reported** (the forward rows have a higher base rate: the diagnostics showed 0.180 vs 0.121 at H=1).
+- Calibration-in-the-large per horizon and predictor: mean predicted probability against the observed rate. Exactly, Brier = (mean predicted - observed)^2 + Var(p - y), so the squared
+  bias is the part of the Brier score that is calibration-in-the-large; its share of the Brier is reported.
+- The change of the LightGBM Brier from the old test to the forward test (old rows re-scored with the same frozen artifacts, which reproduces `results/calibration.md`) is split with the
+  Murphy decomposition already used in `results/calibration.md`: uncertainty = base(1-base) (what a higher base rate does to ANY forecaster's Brier), reliability (miscalibration),
+  resolution, residual; and the squared bias is shown next to them. How much of the change is the base-rate level is read off the uncertainty term (and, for the model itself, the bias).
+- The same table for train frequency, so the model's Brier change can be read against a predictor that does not adapt.
+- Not done to "fix" anything: no recalibration, no threshold moved, no refit.
+
+### Update (2026-10-18, night): the forward test, scored (main: no outage mask; secondary: mask on)
+Run after the decision above was logged and committed (ec944ba): `python scripts/forward_test.py --score` (the self-test passed again just before). The result is deterministic (a second run gave the same
+table). Files: `results/forward_api/` (`forward_table.md/.csv`, `bootstrap.md`, `calibration.md`, `secondary_mask_on.md`, `diagnostics.md`); a README section and a DETAILS section.
+**Source: the Ukraine Alarm API for every feature and outcome; frozen round-13 models and thresholds; 41 days (2026-09-07 to 10-17), 23,616 oblast-hours per horizon; target (b) only.**
+
+**Main result, within-oblast AUC (95% day-block bootstrap interval) / Brier, no mask:**
+| H | LightGBM | logistic | train frequency | same hour yesterday | same as now | rolling 4-week freq. |
+|---|---|---|---|---|---|---|
+| 1 | 0.708 (0.677-0.731) / 0.119 | 0.538 / 0.136 | 0.531 / 0.152 | 0.515 / 0.255 | 0.407 / 0.400 | 0.519 / 0.160 |
+| 3 | 0.662 (0.622-0.691) / 0.167 | 0.561 / 0.183 | 0.522 / 0.259 | 0.532 / 0.323 | 0.459 / 0.429 | 0.536 / 0.216 |
+| 6 | 0.654 (0.610-0.689) / 0.143 | 0.573 / 0.152 | 0.519 / 0.256 | 0.536 / 0.264 | 0.475 / 0.445 | 0.528 / 0.189 |
+- LightGBM is ahead of every other predictor on AUC and on Brier at every horizon, and in every day-resampling the difference has the same sign: all 15 AUC-difference intervals lie above zero and all 15 Brier-difference intervals
+  below zero (for example against train frequency: AUC +0.177 [0.140, 0.210] at H=1, +0.135 [0.090, 0.170] at H=6). The old test's "not established" for the H=6 ranking edge over train frequency stands for that test; here the
+  interval excludes zero. This is one 41-day period from one source, so it is one more piece of evidence, not a verdict.
+- Thresholded metrics at the frozen thresholds (in `forward_table.md`): LightGBM precision/recall/F1 0.419/0.669/0.515 (H=1), 0.613/0.877/0.721 (H=3), 0.750/0.915/0.824 (H=6).
+
+**Calibration in the large (requested), mean predicted against observed:** LightGBM 0.1516 vs 0.1796 (H=1), 0.3681 vs 0.4143 (H=3), 0.5315 vs 0.5711 (H=6): it predicts low by 0.028 / 0.046 / 0.040, and the squared
+bias is 0.7% / 1.3% / 1.1% of its Brier. Train frequency is much further off (0.0857 vs 0.1796, 0.2258 vs 0.4143, 0.3691 vs 0.5711: bias^2 is 5.8% / 13.7% / 15.9% of its Brier), as it cannot follow the level.
+**How much of the Brier change is the base rate** (old test re-scored with the same frozen artifacts -> forward; terms generated in `calibration.md`):
+- H=1: LightGBM Brier 0.0875 -> 0.1193 (+0.0318). The higher base rate alone raises the uncertainty term by +0.0407, i.e. **more than the whole change** (128%); the model's better separation (resolution +0.0097) offsets part of it;
+  calibration-in-the-large (squared bias 0.0001 -> 0.0008) is 2% of the change.
+- H=3: 0.1446 -> 0.1666 (+0.0220); uncertainty +0.0344 (156%), resolution +0.0144 offsets; squared bias 0.0003 -> 0.0021, 8% of the change.
+- H=6: 0.1398 -> 0.1428 (+0.0030); the uncertainty term does not move (0.4300 and 0.5711 are symmetric around 0.5), so the base rate's direct effect is nil; the change is calibration-in-the-large (squared bias 0.0001 -> 0.0016,
+  49% of the change) plus slightly lower resolution (-0.0015).
+- Train frequency over the same change: Brier +0.0503 / +0.0817 / +0.0785, mostly reliability (squared bias +0.0076 / +0.0307 / +0.0372).
+- So the Brier score is worse than in the old test mainly because the period is busier (a harder forecasting problem for anyone), while the model's skill relative to the simple rules is higher here, not lower. Nothing was recalibrated.
+
+**Secondary, not the result: the official outage mask switched on** (`secondary_mask_on.md`): LightGBM within-oblast AUC changes by +0.0003 / -0.0006 / -0.0020 and Brier by +0.0001 / +0.0003 / +0.0006 at H = 1 / 3 / 6; the logistic AUC by
++0.0010 / +0.0018 / +0.0022; the rolling 4-week frequency baseline's Brier by +0.0040 / +0.0082 / +0.0102 (it is the predictor that depends most on the lagged windows); the three baselines that do not use these features are identical.
+The mask choice does not change any conclusion.
+
+**README and DETAILS:** the README gets a short "Forward test on live data (a separate test)" block under the results (numbers copied from the generated tables; links and anchors checked, 0 problems; no code block has `#` or a
+backtick), its status line now says main is final (round 13) and this branch adds round 14; DETAILS gets a full section (frozen artifacts, rows, checks, results, intervals, calibration and the Brier split, the secondary run, caveats), a
+Contents entry and the `data/api_archive/` and `docs/api/` layout lines. The old test's files in `results/` are byte-identical to before.
+**Caveats:** 41 days, one period, one source; the API and the official feed are probably not independent (99.8% of 14,976 oblast-hours agree), so this says the frozen models hold up on a second feed of the same alerts, not that either feed is
+the real world; the period is busier than the old test; Sep 6 and Oct 18 are not scored.
+**Next (not started, as asked):** `predict.py --now` on live API data; what it needs is written in the reply to the user (token on their machine, a complete 29-day archive, open alerts handled as unknown-end, an offline replay test).
+
+### Update (2026-10-18/19): `predict.py --now` on live API data (built and tested offline; not yet run against the real API)
+**User's decisions:** (1) on a missing day, first fetch it from the API automatically; if the API still cannot give it, refuse, name the missing days and print the exact archive command to fix it; no scaling, no
+filling; (2) running alerts (no end) count as running with an unknown end; (3) a freshness line, and the last completed hour as the origin; (4) replace the Telegram path, no fallback; (5) the replay test first,
+offline: as of 2026-10-10 12:00 from a truncated archive, the same features as the forward test at that hour; (6) output per oblast: the probability for H = 1/3/6 and whether it is above the frozen threshold, sorted
+by H = 1, plus one line saying the model tends to predict a bit low in the current period (per the forward test).
+
+**Replay test first (`scripts/check_live_replay.py`, offline), PASSED:** the archive is cut by `live_api.as_of` to what the API would have said at the moment (only alerts that had started; every alert that ended later has
+no end, `isContinue` true, end year 0001), and only the days the live path reads (33 day files). As of **2026-10-10 12:00 UTC**: 20,155 items read, 19,661 after the cut, 66 of them running; 7 of 24 oblasts under alert at
+the origin. The live path (the same feature code as the forward test, no outage mask) gives **0 mismatches in 936 feature values and 0 in 72 LightGBM probabilities** against the forward test's full-data pipeline at
+that hour. As of **12:37** (the origin is still 12:00, everything is cut at it): the same, 0 and 0 (76 running alerts at that moment). Negative controls, which must differ and do: running alerts dropped (213 / 159 feature
+mismatches, 31 / 26 probabilities) and features read at the next hour (520 mismatches, 69 probabilities). So the open-alert handling, the day-file assembly and the cut at the origin reproduce the forward test.
+
+**What was built**
+- `scripts/live_api.py`: `origin_for` (the last completed hour), `needed_days` (the UTC days from t - 32 days to t: an alert is in the file of every day it was active), `read_days`, `live_rows` (running alerts kept with
+  an unknown end), `features_at` (cut at the origin by `known_at`, no mask), `probabilities`, `stale_open`, and `live_forecast` (the live run). `scripts/api_check.py`: `rows_from_items`, `to_official_rows(keep_open=...)`
+  (default unchanged: `results/api_check.md` and the forward-test table are byte-identical after the change; the running alerts keep their `regionId` only in the live mode).
+- `scripts/archive_api.py`: `fetch_days`, `fetch_active` as importable functions (same behaviour), and `--force` (refetch days that are already saved).
+- `scripts/predict.py --now`: the Telegram path is gone (no channel page, no fallback of any kind). `--now` needs `UA_ALARM_TOKEN`; `--oblast` is optional (all oblasts by default) and is checked **before** any request.
+  `--at` is unchanged. The old `--now` message (nothing newer than the snapshot) no longer exists.
+- Output of `--now`: the origin hour in UTC and Kyiv time; a freshness line (now, the newest alert start and end in the API, when the API's active-alerts list was last updated, and the sentence that a quiet spell and a late API
+  look the same from here); the forward-test note read from `results/forward_api/calibration.md` ("mean predicted against observed 0.152 against 0.180 at 1 h, 0.368 against 0.414 at 3 h, 0.531 against 0.571 at 6 h ... nothing is
+  recalibrated"); the frozen thresholds; a table per oblast sorted by the 1 h probability: alert now, probability and above/not above the frozen threshold for 1, 3 and 6 h.
+- Missing days: the days from t - 32 days to today are fetched when they are not saved, and the last three are always refreshed (an alert still running when a day was saved has no end in that file). If any of them cannot be
+  fetched (HTTP code per day printed, no response text), it refuses: "Missing or not refreshed: <days> ... python scripts/archive_api.py --from <first> --to <last>". A refused token (401/403) is reported as such, with no archive command.
+- A guard against stale running alerts: a running alert older than the refreshed days whose region has a newer running alert, or is not in the API's active list now, means its day file is out of date (it may have ended after the
+  file was saved): it refuses and prints `archive_api.py --from <day> --to <today> --force`. Written after the first test showed that checking only "is the region active now" misses a region that has a different alert running.
+
+**Offline tests (a fake local API that serves the real saved days as they would have looked at 2026-10-10 12:37; the token never leaves the process environment):** happy path (a temp archive missing Oct 5-10: 6 days fetched, a
+24-row table, all 72 probabilities equal the forward test's at that hour); the API answering 500 for one day (refuses, names it, prints the command); a refused token (HTTP 401 reported, no command); a stale running alert in an
+old day file (refuses, prints the `--force` command); `--oblast Kyivska`; an ambiguous `--oblast Kyiv` (rejected before any request); the fake token appears in no output and no saved file. `archive_api.py` was re-tested after the
+refactor (daily, backfill, resume, `--force`).
+- **A test mishap, caught and undone:** my first archive test used `runpy`, which re-executes the script in a fresh namespace, so the temporary-folder patch did not apply and the test wrote into the real `data/api_archive/`:
+  a fake active-alerts snapshot, rows in `log.csv`, and (with `--force`) five day files (Oct 1-5) overwritten by the fake server's re-serialised copies. It was seen in `git status` at once; the tracked files were restored with
+  `git checkout`, the stray folders removed, `git status` for `data/` is clean, and nothing was committed. The test was redone importing the module (with an assertion that its output folder is a temp one).
+
+**Not tested (cannot be from here):** anything against the real API: the real `/api/v3/alerts` payload (the code uses `regionId` and `lastUpdate` from the swagger), real latency and rate limits for a first top-up
+(about 6 s per call; a first run after a few days needs a handful of calls), and the first live forecast itself. The stale-running guard could refuse wrongly if the real active list does not contain district-level ids; it
+only matters for a running alert older than 3 days, and the message names it.
+**New requirements on the user's machine:** `pip install translitua` (the API names are Ukrainian); `models/frozen.json`, which `scripts/evaluate.py` now writes (models/ is not committed), so `python scripts/evaluate.py` must be run once
+after pulling; the token in `UA_ALARM_TOKEN`. README ("Try it") and DETAILS (run order) describe `--now`; links and anchors checked (0 problems), no code block has `#` or a backtick; the old results are byte-identical.
+
+### Update (2026-10-18/19): the first live run, a cross-machine difference in one table, and the close of round 14
+**First live run (reported by the user, on their Mac):** `predict.py --now` against the real API at 18:38 UTC: origin 18:00 UTC, freshness 0 min, no refusal, all 24 oblasts printed. So the code path that could only be tested offline (the
+real `/api/v3/alerts` payload, the top-up of the archive, the stale-alert guard staying quiet) worked on real data on the first try. The archive files written by that run are on the user's machine and are **not committed** (their decision).
+
+**A cross-machine difference the user saw after running `scripts/evaluate.py` on the Mac:** `results/base_rates_by_oblast.md` and the two figures (`figures/model_vs_baselines_h6.png`, `figures/reliability_h6.png`) showed as modified; the user restored
+them with `git checkout`. Looked at here (I cannot see the Mac's diff):
+- **Figures:** expected and already documented (README: figures can differ slightly with fonts and the matplotlib version; Python 3.9 draws them a few pixels differently). The numbers behind them are the results tables.
+- **`base_rates_by_oblast.md`: cause not confirmed, one candidate found.** The table is `pd.DataFrame(base_rates).sort_values("b_start_6", ascending=False)` (`scripts/evaluate.py`, line 381): one single-key `sort_values` with the default, **unstable** sort.
+  Three oblasts tie exactly on that key (Ivano-Frankivska, Lvivska, Zakarpatska: one new alert each, b_start_6 = 0.0106), so their relative order is whatever the sort algorithm of that numpy build does with ties. On this machine (x86, numpy 2.5.3,
+  pandas 3.0.5) the default, quicksort, stable and heapsort all give the committed order, so I cannot reproduce a difference here. Against the candidate: a Mac run in round 8 matched every table byte for byte with the same ties, so if the Mac's
+  environment did not change since, the tie order is not the whole story. The other single-key sorts in the code have no ties in the committed outputs (`lowest_bin_h6.md`: no shared counts; the feature-importance gains are floats); every other sort is stable
+  or multi-key.
+- **Does it matter? No for any result.** The table is a descriptive per-oblast breakdown of the target columns over the same test rows that feed `test_table.md`, `calibration.md` and the rest. The user reports that only this table and the two figures differed;
+  since all the metric tables matched byte for byte, the rows, targets and models are identical on the two machines, so the per-oblast base rates cannot differ in value; at most the row order of tied oblasts or the last printed digit. No model number, baseline,
+  forward-test number or README number comes from this table.
+- **To confirm** (not done, needs the Mac): `python -c "import sys, numpy, pandas; print(sys.version.split()[0], numpy.__version__, pandas.__version__)"`, then `python scripts/evaluate.py` and `git diff results/base_rates_by_oblast.md` (it shows whether only the three tied rows moved).
+- **A fix, if wanted (not applied; evaluate.py and the committed tables stay as they are):** sort by the rate and then by the oblast name, `sort_values(["b_start_6", "oblast"], ascending=[False, True])` after `reset_index()`; on this machine that reproduces the committed file byte for byte, and it would make the table
+  the same on any machine. The README sentence "Tables in `results/` are byte-identical across the machines we tried" is not changed here because the cause is unconfirmed; if the tie order is confirmed, the sentence should name this one exception or the sort should be fixed.
+
+### Round 14 closed (branch `live`; main untouched at 5c8cede)
+**What round 14 delivered** (all on `live`, logged above in order): the alerts.in.ua detour (docs read, token was for another service); the Ukraine Alarm swagger read; `src/ukrainealarm.py` (client: token only from `UA_ALARM_TOKEN`, status codes only, adaptive rate limit),
+`scripts/api_probe.py` (history reaches back to 2025-10-03), `scripts/archive_api.py` (daily save, resumable backfill, `--force`, importable `fetch_days`/`fetch_active`), the archive of 74 days (Aug 6 - Oct 18) the user pushed; `scripts/api_check.py` and
+`results/api_check.md` (API vs official: 99.8% of 14,976 oblast-hours agree; one wave on Aug 19-20 missing from the official feed); `scripts/sensitivity_aug19.py` and `results/aug19_sensitivity.md` (putting it back moves the model's AUC by at most +0.0031);
+`scripts/forward_test.py` and `results/forward_api/` (frozen models, 41 days of API data, no outage mask, LightGBM ahead of every baseline on AUC and Brier at H = 1, 3, 6; calibration in the large and the Brier split; a secondary masked run);
+`scripts/live_api.py`, `scripts/check_live_replay.py` and the API version of `predict.py --now` (replay test passed: 0 of 936 features and 0 of 72 probabilities differ from the forward test; run once on the real API); README and DETAILS sections, the Aug 19-20
+limitation, the Sheptytskyi rename stated as fact. `models/frozen.json` (thresholds, logistic weights) is written by `scripts/evaluate.py` (models/ is not committed); the old test's tables are unchanged by the round (byte-identical on the machine used here).
+**Rules check (CLAUDE.md):** no leakage (features at t from what was known at t; the leakage check on API rows and the replay test passed); the old test window is unchanged and the forward test is reported separately; every model number is next to the baselines; thresholds frozen, none chosen on test;
+`data/raw` never edited; the volunteer feed was not used; the token never appeared in a file, a commit, a log line or an error message (status codes only; it was typed once in this conversation, so rotate it).
+**Open items, all outside this round's scope:** (1) the `base_rates_by_oblast.md` difference on the Mac: confirm the cause and decide on the sort fix (above); (2) the archive updates from the live run, on the user's machine, uncommitted; (3) the optional Jul 1 - Aug 5 backfill (an old-window test on API features),
+skipped; (4) `live` is not merged anywhere: the submitted state is `main` (round 13); (5) if the README sentence about byte-identical tables should change after (1).
+
+### Update (2026-10-19): the tie in `base_rates_by_oblast.md` confirmed and fixed
+**Confirmed by the user on the Mac** (Python 3.9.6, numpy 2.0.2, pandas 2.3.3): `git diff results/base_rates_by_oblast.md` shows only Lvivska and Zakarpatska swapped, all values identical. So the cause is the one named in the entry above: three oblasts tie exactly on
+b_start_6 (Ivano-Frankivska, Lvivska, Zakarpatska), and the default `sort_values` is not stable, so numpy 2.0.2 on that machine ordered the tied rows differently from numpy 2.5.3 here. (The Mac's round-8 match was luck of the same tie order under a different numpy; the data and the ties did not change.)
+**The fix (`scripts/evaluate.py`):** the table is built with `reset_index().sort_values(["b_start_6", "oblast"], ascending=[False, True], kind="stable")`: the rate first, the oblast name second, so tied rows come out alphabetically on any machine. Only this one sort was changed. The other single-key sorts
+(`lowest_bin_h6.md` by rows_in_bin, the feature-importance gains) have no ties in the committed outputs and were left as they are; the same one-line pattern would fix them if a tie ever appears.
+**Checked here (Linux x86, numpy 2.5.3, pandas 3.0.5):** `scripts/evaluate.py` rerun with the fix: `results/base_rates_by_oblast.md` is **byte-identical to the committed file** (the committed order was already the alphabetical tie order), every other file in `results/` and `figures/` is unchanged
+(`git diff` empty), and the six saved model files (`lgbm_b_start_h*.txt`, `frequency_b_start_h*.csv`) are byte-identical to before. Not re-run on the Mac: the user can confirm there with `python scripts/evaluate.py` and `git status` (the two figures may still differ by a few pixels, as documented).
+**README:** the sentence on byte-identical tables now names the one exception and says the tie order is fixed.
+**Scope:** `live` only. `main` still has the old sort (it is the submitted state): the same one-line change would go there if a new round on main is ever opened.
+
+---
+
+## 2026-10-19 — Round 15 (branch `live`): prediction log, scorer, combined dataset
+**Request (user):** no auto-run, no new API backfill (we have the data); (1) every `predict.py --now` run appends its forecast to `data/predictions/log.csv`, append only; (2) `scripts/score_predictions.py` scores forecasts whose horizon has passed against the API archive, same target and metrics as the forward test, says how many forecasts
+and which dates, and says clearly when the sample is too small; (3) a combined dataset for the next round: official data to 2026-08-28, the API archive from 08-29, the Aug 19-20 Chernihivska/Kyivska gap patched from the API, every splice point documented in DETAILS, features at the splice (around Aug 29) checked against either side; train
+nothing. Test offline, log, commit to live, Mac commands if any, stop. Nothing was run against the real API this round, nothing was fetched, and `main` is untouched.
+
+### 1. The prediction log
+- `scripts/live_api.append_prediction_log`, called by `predict.py --now` after a successful forecast: columns `origin_utc, oblast, h, probability, above_threshold, threshold, model_version, run_time_utc`; **all 24 oblasts x 3 horizons** per run (72 rows), whatever `--oblast` shows (my reading of "its forecast": the whole forecast the run
+  computed; a one-oblast display must not make the log thinner). Probabilities with 8 decimals. `model_version` = `frozen-r13-` + 12 hex digits of the SHA-256 of the three LightGBM files and `models/frozen.json` (so a refit would show up as a different version).
+- **Append only:** the file is opened for appending, never rewritten; the header is written only when the file is new; if an existing file has a different header, nothing is written and the run says so. A refused run (incomplete history, refused token) logs nothing. Running twice in the same hour appends a second set (no dedupe at write time); the scorer uses the first.
+- **Tested offline** (a fake API serving the real saved days as of 2026-10-10 12:37, temp folder): one run with `--oblast Kharkivska` logged 72 rows, all 24 oblasts, 3 horizons, one origin, one model version; a second run appended 72 more, the first run's bytes unchanged, one header, identical probabilities (same data); a file with another header was left untouched with an error;
+  the token is in no row. The log is not committed here (it is created by the user's runs; whether to commit it is their call).
+
+### 2. The scorer (`scripts/score_predictions.py`, offline, no token)
+- **Eligibility:** a forecast is scored only if both UTC day files that its window (t, t+H] touches were fetched (from `data/api_archive/log.csv`, the archive's own fetch log) at least 5 minutes after t+H. Others are counted as "not scoreable yet", never guessed. Duplicates: the first run of an origin/oblast/H is scored. The log is read, never changed.
+- **Outcomes and metrics:** outcomes from the day files exactly as in the forward test (AIR only, hromada dropped, 5-minute restarts joined, half of the raions; running alerts kept, their start counts); target (b); within-oblast AUC, Brier, mean predicted against observed rate (calibration in the large), precision/recall/F1 from the **decision logged with each forecast** (not recomputed from a threshold),
+  next to the three baselines on the same rows (same as now, same hour yesterday, train frequency from the frozen table, raw 0/1 where applicable); a day-block bootstrap (whole origin dates) from 3 scored dates on; a line with the forward test's AUC "for reference only (not pooled)"; a warning if the scored rows come from more than one model version.
+- **Too small, stated in the output (my lines, a judgement):** fewer than 3 scored dates: "far too small to mean anything", no interval; 3 to 13 dates: "too small to mean anything yet", the interval is shown and is very wide (the forward test with 41 dates still had about +-0.03 on the H=1 AUC); 14 or more: "a start", not the 41 days of the forward test, do not pool.
+  It always says how many forecasts, origin hours and which dates were scored and how many are not scoreable yet.
+- **A flaw found and fixed by the self-test:** the first version took the F1 threshold from the first scored row of each horizon, which would be wrong as soon as the log holds two model versions; it now uses the logged decision per forecast.
+- **Tested offline:** a synthetic log with the frozen model's probabilities for every hour of 2026-09-07 to 10-17 (all oblasts, H = 1/3/6; 70,902 rows including a later duplicate run with different probabilities, origins at the edge of the archive and one beyond it) scores to **exactly the forward test's table: 60 cells (AUC, Brier, precision, recall, F1 for LightGBM and the three
+  baselines), 0 differ by more than 0.0006**; the duplicate was ignored, the origin whose H=6 horizon ends after the archive was fetched was counted as not scoreable (H=1 and H=3 of that origin were scored), the origin in November was not scoreable, the log file was byte-identical afterwards. Small samples: 6 hours of one day -> "far too small", no interval; 5 days -> "too small yet" with the interval;
+  an empty log and a log of only future origins give plain messages.
+
+### 3. The combined dataset (`scripts/build_combined.py`, `scripts/check_combined.py`; nothing trained)
+- **Built:** `data/combined/alerts_combined.csv` (210,807 rows, 22 MB, deterministic: two builds gave the same SHA-256; git-ignored) and `data/combined/MANIFEST.md` (committed: rules, counts, the SHA-256, the SHA-256 of the inputs). Rules and every splice point are in DETAILS ("The combined dataset"): the splice at T = 2026-08-29 00:00 UTC (official rows that end at or before T, API rows that end after T; the 46 official rows that span T and the 2,025 official rows that start
+  after T are dropped); the 18-row patch; time resolution, levels, names and filters; the end (alerts still running when the API was last fetched are left out; the archive is complete to 2026-10-18 06:00); and that the outage mask must not be applied to this dataset (the API observed the days the official feed lacks; `split()`'s removal of rows touching `OFFICIAL_OUTAGES` must be switched off for it next round).
+- **A fact found while writing it:** the official feed is not blank during the "outage": 88 official rows start on Aug 29 and 241 on Sep 2 (then 448, 461, 381, 357 and 49 on Sep 3 to 7). The old description "no official messages Aug 29 to Sep 2" was approximate; the mask and the old test are unchanged, and the combined dataset does not use any official row that starts at or after T, so it does not depend on it.
+- **Checks (`results/combined_splice_check.md`):**
+  - Before the splice, on rows the patch cannot reach (08-12 to 08-19 19:59 UTC and 08-27 20:00 to 08-28 23:00), the combined features equal the official-only ones **exactly** (all 13 features, 4,512 and 672 oblast-hours, 0 differences); from 08-19 20:00 they differ by design (the patched wave is in the 7-day windows: `starts_7d` mean difference 0.13 over 5,280 oblast-hours).
+  - Around and after the splice (T -48 h to 09-05) the combined features equal the API-only ones within 0.001 on all features but a handful of rows; at the splice hour all 24 oblasts have the same `now` (9 under alert in both); `freq4w` 09-03 to 09-19: 9,760 of 9,792 rows equal, the rest by at most 0.25 (one of the four lags).
+  - Continuity: daily means of the main features are smooth through 08-29; the number of oblast episodes per day is steady (113 on 08-28, 107 on 08-29). `starts_7d` and `share_7d` change more across T than most neighbouring 48 h blocks (13% and 11% of other pairs larger), because they are 7-day windows of a series whose alert rate was rising from 08-27; the two equalities above show that change is in the data, not made by the splice.
+    (The "share of other pairs larger" column alone would not prove that; the equalities do.)
+  - Leakage: features at 24 origins around T rebuilt from combined rows cut at t equal the full-data ones (22,464 values, 0 mismatches).
+- **Not done on purpose:** no training, no change to `evaluate.py`, the old test, the forward test or `data/raw`; the old results are byte-identical (`git diff` on `results/` and `figures/` is empty; the replay test and the forward-test self-test still pass). `results/combined_splice_check.md` is new.
+- **Docs:** DETAILS has two new sections and contents entries (combined dataset with all seven splice points; the live forecast log and its scorer), the run order and layout lines; the README `--now` bullet gets one sentence about the log and the scorer. Links and anchors checked (0 problems); no code block has `#` or a backtick.
+
+**Mac commands, if wanted** (nothing here needs the token except the live run, which logs by itself): `git pull`, `source .venv/bin/activate`; offline: `python scripts/build_combined.py` and `python scripts/check_combined.py` (need translitua, already installed); the log grows with every `python scripts/predict.py --now`; after a few days and a later run of `--now` or
+`archive_api.py` (either refreshes the last days), `python scripts/score_predictions.py`. The first scorer runs will say "not scoreable yet" or "far too small": that is correct.
+**Open for the next round:** whether to commit `data/predictions/log.csv` (and when); the combined dataset is ready but the training choices (window, refit schedule, `split()` without the outage exclusion) are not made.
+
+---
+
+## 2026-10-19 — Round 16 (branch `live`): a v2 model trained on the combined dataset. DESIGN, fixed before any test number is seen
+**State when this was written:** the archive refresh is pulled and the combined dataset rebuilt with the cut; nothing is trained; no v2 prediction, no score and no outcome statistic of the test window has been computed or looked at (only row counts of the split, below). This entry is committed before the training code exists.
+
+### Set-up done in this commit (no model involved)
+- **Archive refresh pulled** (commit 69da939: the files for 2026-10-16, 10-17 and 10-18 were fetched again; 74 day files, 2026-08-06 to 10-18). `results/api_check.md` was regenerated: only its archive checksum and the "what the API rows were turned into" counts moved (the 80 running alerts of the first fetch are 61 now); every comparison number is the same.
+  `results/forward_api/` and `results/combined_splice_check.md` were regenerated on the refreshed archive and are **byte-identical**; the replay test and the forward-test self-test still pass.
+- **Combined dataset rebuilt with the cut** (`scripts/build_combined.py`): alerts that start before 2026-10-18 00:00:00 UTC are kept and every end after that instant is clipped to it (the alerts that were still running when the archive was fetched have no end and are clipped too), so the file does not depend on when the archive was refreshed. **210,440 rows, SHA-256
+  `721cf7755726c9cc38b06ea116fe0750a76f0fb2b45de67d9a34748feb1f8c14`** (in the committed `data/combined/MANIFEST.md`; 534 API rows start at or after the cut and are ignored, 47 have their end clipped). To have the same file on the Mac: `git pull`, `python scripts/build_combined.py`, `git status` (an unchanged MANIFEST.md means the same SHA-256).
+- Code: `to_official_rows` sorts by end with a stable sort (the last unstable sort on that path; a tie order cannot change the rows but could in principle reorder them differently on another numpy); `src.dataset.split(..., outages=...)` (default unchanged: the official feed's outage; the combined data passes `()`). The old pipeline is untouched: `scripts/evaluate.py` rerun gives byte-identical `results/`, `figures/` and `models/` (incl. `frozen.json`).
+
+### The design (the user's six points, with how I read each; anything not in the user's text is marked "my reading")
+1. **Data.** The combined dataset, cut at 2026-10-17 23:59 UTC for everything (my reading: start < 2026-10-18 00:00, ends clipped there, as built above). Rows after are ignored. **No outage mask:** features are built with `build_features(..., outages=[])` and the rows are split with `outages=()` (the API observed 2026-08-29 to 09-02; the official-only exclusion
+   of rows near the outage is switched off, 3,456 / 3,504 / 3,576 train rows at H = 1 / 3 / 6 are kept that v1 would have dropped). Grid from 2022-03-16 (as v1) to the cut.
+2. **Split, per H, exactly as v1's `split()` with `test_start = 2026-09-28 00:00 UTC`:** train = origins whose target window closes by 2026-09-28; **validation fit** = the origins whose window closes by 2026-09-21 00:00 (train to 09-20); **validation week** = origins 2026-09-21 to 09-27 (windows closing by 09-28), used for early stopping (100 rounds) and for the F1 threshold, as in v1;
+   **final model** = refit on all train origins (the validation week included) with the early-stopped tree count, thresholds from the validation fit (the same known approximation as v1: the threshold comes from the validation fit, not the test fit); **test** = origins 2026-09-28 00:00 to 2026-10-17 (every origin whose window closes by the cut), 20 days.
+   Row counts (computed, no outcomes): train 950,400 / 950,352 / 950,280; validation fit 946,368 / 946,320 / 946,248; validation week 4,032 / 3,984 / 3,912; **test 11,520 / 11,472 / 11,400** at H = 1 / 3 / 6 (last test origin 10-17 23:00 / 21:00 / 18:00). Purging asserted as in `check_no_peeking.py`: train windows close by 09-28, validation-fit windows by 09-21.
+3. **Model.** The same features (`src/features.FEATURES`), the same hyperparameters (`PARAMS` in `scripts/evaluate.py`: learning rate 0.05, 31 leaves, min_data_in_leaf 200, seed 0, deterministic), the same `MAX_TREES` 2000 and early stopping. **No tuning of anything.** The only change is more and newer data (to 2026-09-27 for the final fit, instead of to 2026-08-07).
+4. **Comparison on the test rows, the same rows for every predictor, per H.** Predictors: **v2** (plain LightGBM, primary); **frozen v1** (the round-13 boosters and F1 thresholds from `models/`, scored on the combined-data features of these rows with the same feature code); **the logistic model** (my reading: refit on the v2 training rows with the v1 protocol, the same `starts_7d + hour + oblast`
+   design; the frozen v1 logistic is not scored); **the CLAUDE.md baselines**: same as now, same hour yesterday, train frequency (my reading: the static oblast x Kyiv-hour x weekday table fitted on the v2 train rows, threshold from the table fitted without the validation week, as v1); extra, as in the forward test: the rolling 4-week frequency (`freq4w` as a score, threshold from the validation week).
+   Metrics as in the old and forward tests: within-oblast AUC (main), Brier with its Murphy decomposition, calibration in the large (mean predicted against observed), calibration table, precision/recall/F1 at the validation-week threshold (0/1 baselines raw). **Bootstrap by days** (whole test days resampled with replacement, 1,000 resamples, seed 0, 95% percentile intervals) for the differences v2 minus each other predictor (v1, logistic, the three baselines, freq4w, v2 with Platt), in AUC and in Brier.
+   **Said plainly: v1 was already scored on these days in the forward test** (2026-09-07 to 10-17 includes the whole v2 test window 09-28 to 10-17), so its number here is not new information about v1; what is new is that v2, trained on data up to 09-27 and never on a test day, is compared with it on the same rows. It is 20 days, one period, one source (the API for 09-28 onward), so the intervals will be wide. v2's training data include the 09-07 to 09-27 days that were v1's forward-test days.
+5. **Calibration, secondary.** v2 with Platt scaling fitted **only on the validation week** (my reading: a logistic regression of the outcome on the logit of the validation-fit model's scores for the validation week, intercept and slope; the fitted map is then applied to the final model's test scores, the same approximation as the thresholds; its F1 threshold is recomputed on the scaled validation scores). Reported next to plain v2, per H, as a secondary variant. Within-oblast AUC is identical by construction (a monotone map); only Brier,
+   calibration and the thresholded metrics can differ. **Plain v2 is primary**; the Platt variant plays no part in the decision rule.
+6. **Decision rule, fixed in advance.** `predict.py --now` switches to v2 **only if** (a) the within-oblast AUC of plain v2 is not worse than that of frozen v1 at **all three** horizons (point values at full precision on the identical per-H test rows: AUC_v2 >= AUC_v1 at H = 1, 3 and 6) **and** (b) its Brier is better than v1's **at least at H = 1** (Brier_v2 < Brier_v1 at H = 1). The intervals do not enter the rule; the Platt variant does not enter it; nothing else does.
+   **Otherwise v1 stays** the default for `--now`, and v2's numbers are still published. **If the rule says v2:** the model for `--now` is refit on everything up to the cut (all origins whose window closes by 2026-10-18 00:00) with the same tree counts (the early-stopped counts of the validation fits) and the v2 validation-fit thresholds, saved as `models/v2/` with a model version `frozen-v2-...` in the prediction log; **v1 stays available through a flag** (`--model v1`; `--model v2`), the default comes from `results/v2/decision.json`, which the training script writes by applying this rule. The note under the `--now` table is generated from the calibration table of whichever model is used.
+7. **What will not be done after seeing numbers:** no change of split, features, hyperparameters, rule, test window or predictor list; no second run with other settings; if a bug is found afterwards it is reported with the numbers before and after, and the design above stays the reference. Both outcomes of the rule are acceptable results.
+
+**Not decided here, to be reported:** nothing about `main` (still the submitted state, round 13); the README/DETAILS sections follow the results. The training script (`scripts/train_v2.py`) is written after this commit.
+
+## 2026-10-19 — Round 16 (branch `live`): v2 RESULTS, decision, docs
+**The design above was committed first (4e0c628); nothing in it was changed after a number was seen.** Script `scripts/train_v2.py`, results in `results/v2/` (`test_table`, `bootstrap`, `calibration`, `decision.json`), production model in `models/v2/` (git-ignored). No mishaps in this round's runs.
+
+### Result (test 2026-09-28 to 10-17, 20 days, the same rows for every predictor; within-oblast AUC / Brier)
+| H | v2 | frozen v1 | train frequency | same hour yesterday | same as now |
+|---|---|---|---|---|---|
+| 1 | 0.692 / 0.127 | 0.686 / 0.129 | 0.513 / 0.165 | 0.517 / 0.269 | 0.400 / 0.421 |
+| 3 | 0.663 / 0.166 | 0.660 / 0.170 | 0.516 / 0.278 | 0.541 / 0.316 | 0.459 / 0.438 |
+| 6 | 0.664 / 0.131 | 0.654 / 0.135 | 0.507 / 0.271 | 0.543 / 0.238 | 0.478 / 0.443 |
+(Copied from `results/v2/test_table.md`; the logistic model, the rolling 4-week frequency and the thresholded precision/recall/F1 are in the same file.)
+
+### Decision rule, applied as written (point values, plain v2 against frozen v1)
+AUC v2 not worse than v1 at H = 1, 3, 6: 0.6916 vs 0.6856, 0.6633 vs 0.6598, 0.6645 vs 0.6536: yes at all three. Brier better at H=1: 0.1269 vs 0.1292: yes. **So `predict.py --now` defaults to v2**; `--model v1` keeps the old model. The production model was refit on every origin whose window closes by the cut with the same tree counts (194 / 181 / 149) and the validation-fit thresholds (0.2519 / 0.4270 / 0.4268), saved to `models/v2/`.
+
+### Honest reading
+- The AUC edge over v1 is small and not established: the day-bootstrap 95% intervals of the difference (v2 minus v1) are +0.006 [-0.001, 0.014] at H=1, +0.004 [-0.003, 0.010] at H=3, +0.011 [0.000, 0.020] at H=6, so zero is inside at H=1 and H=3 and on the edge at H=6. The rule selected v2 on point values; that is weaker than "v2 ranks better".
+- The Brier edge is consistent across resamples and is mostly level: both models predict lower than what happened in this busier period (H=1 mean predicted 0.1762 v2, 0.1611 v1, against 0.1957 observed), v2 less so.
+- Platt scaling fitted on the validation week (slopes 1.11 / 1.09 / 1.14, small intercepts) changes Brier by at most 0.0003 and ranking not at all; no benefit, so it stays a secondary line.
+- Both LightGBM models are far ahead of the three baselines and of the logistic model, as in the earlier tests.
+- **v1 was already scored on these days in the forward test**; this is one 20-day period from one source. v2's training data include 09-07 to 09-27, the first part of v1's forward-test period, so v2 is not independent of what was learned there. The model `--now` uses is additionally refit on the 20 test days, which has no held-out score.
+
+### Checks
+- `train_v2.py` run twice: `results/v2/` and all model files (`models/v2/*.txt`, `info.json`, `frozen.json`) byte-identical.
+- `predict.py --now` plumbing tested offline against the fake local API (real saved days as of a fixed moment): default picks v2 from `decision.json`, `--model v1` and `--model v2` each give 72 probabilities equal to the respective model on the forward-test features; the prediction log carries the model version (`frozen-v2-...` vs `frozen-r13-...`).
+- `check_live_replay.py`: passed; `forward_test.py --selftest`: all cells equal; no existing file in `results/` changed (git status shows only new `results/v2/`). `evaluate.py` was not rerun: nothing it uses (`src/`, its own script) changed in this round.
+- README: v2 subsection (numbers generated from the `results/v2` tables, not retyped) and the `--now` bullet; DETAILS: new v2 section, contents entry, run order, layout. Links/anchors: 0 problems; no `#` or backticks inside fenced blocks.
+
+### Mac commands (nothing here touches the API except the last)
+git pull; source .venv/bin/activate; python scripts/build_combined.py then git status (unchanged `data/combined/MANIFEST.md` = the same SHA-256 721cf775…f8c14); python scripts/train_v2.py (about 3 minutes; `git status` should show no change in `results/v2/`); python scripts/predict.py --now (v2 by default, token read from `UA_ALARM_TOKEN`); python scripts/predict.py --now --model v1 for the old model.
+`main` untouched.
+
+## 2026-10-19 — Round 17 (branch `live`): the forecast map
+**Nothing about the models, the data, the thresholds or any result changed.** `results/` is untouched (git status shows no change there); the replay test and the forward-test self-test still pass. No outcome is shown on the map.
+
+### What was built
+- `scripts/forecast_map.py`: `predict.py --now` and `--at` write `output/forecast_map.html` (git-ignored, `output/` added to `.gitignore`) after printing their table. One self-contained page: inline SVG map, CSS-only 1 h / 3 h / 6 h switch (radio buttons), no script, no link, no font, no image, no request when opened (checked by the test: none of http, script, link, src, href, img, iframe, fetch, XMLHttpRequest and so on appears; url() only for the in-page hatch pattern). Light and dark colour sets by `prefers-color-scheme`.
+- On every oblast: probability (text), filled triangle = at or above the frozen threshold of the model that made the forecast, open triangle = below, red "!" badge = under alert. Kyiv City: its (small) outline plus a call-out box with the same numbers and a leader line. Crimea, Sevastopol, Luhansk: grey, hatched, "no data" (Sevastopol is too small for a label). Header: origin hour in UTC and Kyiv time, time the page was made, model v1/v2 with the fingerprint that is also in the prediction log, freshness line, the model's calibration note (`--at`: the "replay of a past hour" text, the training-period warning when it applies, and v1's forward-test note). Footer, one line: "A study model, not for safety decisions: follow the official alerts." Under the map a table with all numbers and the words above / below (so the map is readable without colour at all).
+- `scripts/build_geo.py` + `data/geo/ukraine_oblasts.geojson` (59 KB, 27 units) + `data/geo/README.md`: Natural Earth admin-1 1:10m, **public domain**, pinned to a commit and a SHA-256 (the script refuses any other file), simplified from 20,117 to 3,270 vertices with shared borders simplified once, so neighbours keep the same line (the test checks all 2,420 shared edges are the same line in both units).
+- `scripts/check_forecast_map.py`: the name match, the geometry, the page, the colours, and `predict.py --at` writing the page.
+
+### Decisions and things I noticed (the user did not specify these)
+1. **Source choice.** Natural Earth rather than a GADM / geoBoundaries / OCHA file because its licence is the clearest (public domain, no attribution condition). Its generalisation is coarse (1:10m), fine for a country-level picture; borders are not survey lines.
+2. **Crimea and Sevastopol.** Natural Earth's default file lists them under Russia (its de facto view) while giving them Ukraine's ISO 3166-2 codes (UA-43, UA-40). I took them by that code, as units of Ukraine within its internationally recognised borders, and drew them grey with "no data", as the user's text implies. Recorded in `data/geo/README.md`.
+3. **"Whether an alert is running now" is the state at the origin hour**, not at the moment the page is opened: the origin is the last completed hour and the model's own "now" feature is evaluated there, so it can be up to an hour old. Computing a second, newer state for the display would mix two instants on one page; the header and legend say "at the origin hour" and the page shows when it was made.
+4. **Name matching** is by ISO 3166-2 code (our 24 names in `OURS`), and the test checks it three ways: each code against a name the feature must carry (Kyiv City and Kyivska oblast have the same English name in the file, so they are told apart by "Kiev City" and "Kyyivs'ka Oblast'"), the first three letters of our name against the file's English name, and completeness: the file has exactly our 24 plus Luhansk, Crimea, Sevastopol; no code twice; our 24 keys equal the 24 oblast names in the alert data. (My first version of the letter check used five letters and failed on Lviv / Odesa / Sumy: fixed to three, which is the weakest of the three checks, the code and the alias being the strong ones.)
+5. **Colour bins: 5, not 7.** My first ramp had 7 steps; the skill's ordinal validator needs adjacent steps at least 0.06 apart in OKLab lightness and the faintest step at least 2:1 on the page, and the dark mode may not go darker than step 600. Seven steps do not fit in the lightness range that is left, and one step landed where neither black nor white text reaches 4.5:1. The final bins are under 10%, 10 to 25%, 25 to 50%, 50 to 75%, 75% and over (same for all three horizons, so colours compare across the switch); light mode: darker = more probable (steps 250, 350, 500, 600, 700), dark mode: lighter = more probable (steps 600, 500, 400, 250, 100). The validator passes in both modes (monotone, gaps at least 0.09, 2.06:1 and 2.15:1 for the faintest/darkest fill, one hue); text on every fill is at least 4.5:1; outlines 3.4:1 (light) and 5.2:1 (dark). Coarser bins hide small differences; the printed percentage and the table carry the exact value. The first light-mode ramp also failed the 2:1 floor at its faint end (1.29:1), which is why the lightest light-mode step is 250.
+6. **A map failure does not take the forecast down:** `write_or_warn` prints one line on stderr ("Map not written: ...") and the forecast, the log and the exit code are as before. A **refused** forecast (missing days, stale open alerts) writes no page, so an old map is never mistaken for a new one only if the old file is deleted: the old file stays on disk. I did not add deletion (a stale file with its own "page made" and origin hour in the header says what it is).
+7. **`--oblast X` still draws all 24** (the probabilities are computed for all of them anyway); the chosen oblast is not highlighted. Not asked for, not added.
+
+### Tests
+- `python scripts/check_forecast_map.py`: all passed (names, geometry, page in a summer and a winter case so the Kyiv offset is checked at +3 and +2, colours, `--at` for all oblasts and for `--oblast Kyivska`).
+- Offline end-to-end against the fake API (real saved days as of 2026-10-10 12:37 UTC; map and prediction log in a temp dir, asserted not to be in the repo): default (v2), `--model v1`, `--model v2`, `--oblast Kyivska`: 72 probabilities each, every probability, above/below flag and alert state in the page equals the model's own output on the forward-test features (to 0.0005), the fingerprint, origin hour, freshness line, calibration note, thresholds and footer are in the page, the number of "!" badges equals the 7 alerts running at that hour (+ the Kyiv call-out if it were one), no token text anywhere; a refused run (day 2026-10-09 answered 500) exits 1 and writes no page.
+- Rendered in headless Chromium here (light, dark, 1 h and 6 h, and a 390 px phone width) and looked at: no clipped or overlapping labels at desktop width; at phone width the names are hidden, percentages enlarged and the badge moved above the number. Not opened on a Mac or in Safari: the switch is plain radio-plus-sibling CSS, which every current browser supports.
+- Not changed this round: models, results, data/raw, data/api_archive, `main`.
+
+### Mac commands
+git pull; source .venv/bin/activate; python scripts/check_forecast_map.py; then either a live run (token from the env var, as before): python scripts/predict.py --now followed by open output/forecast_map.html — or, without the API: python scripts/predict.py --at "2026-08-20 12:00" --all followed by open output/forecast_map.html.
+
+## 2026-10-19 — Round 16 follow-up (branch `live`): decision.json rounded to 10 decimals
+**Why:** on the user's Mac (arm) `results/v2/decision.json` differed from the file made here (x86) only in the last float digits (0.12690324819633533 against 0.1269032481963353): the same computation, a last-bit difference in floating-point sums between the two CPUs. Every other file in `results/v2/` is printed to 4 decimals and was already identical.
+**Change (one line plus a helper in `scripts/train_v2.py`):** every float written to `decision.json` is rounded to 10 decimals (`rounded()`; Python's `round` is correctly rounded, so the same value gives the same text everywhere). **The decision itself still runs on the full-precision values**, exactly as the design says ("point values at full precision"); only the file is rounded. Nothing else was touched: no feature, split, hyperparameter, rule or test window.
+**Checked:** `train_v2.py` rerun here (3 min 37 s). (1) `decision.json`: same keys, every value equal to the old one within 5e-11, `use` is still `v2`, the three AUC flags and the Brier flag are unchanged; the rule re-evaluated on the *rounded* numbers in the file also gives v2 (smallest margins: AUC 0.0035 at the closest horizon, Brier at H=1 0.0023, far above the rounding). (2) The other six files in `results/v2/` are byte-identical to before. (3) The five files in `models/v2/` (three boosters, `info.json`, `frozen.json`) are byte-identical to before (SHA-256 compared). `predict.py` reads only the `use` field of this file.
+**Limit, said plainly:** rounding makes the file identical across machines unless a last-bit difference happens to straddle a rounding boundary at the 10th decimal, which for differences of the order of 1e-16 has a chance of about 1e-6 per number. `models/v2/frozen.json` (full-precision thresholds, git-ignored) and the model files are not covered by this and were not compared across the two machines; if the Mac's `models/v2/` hashes differ from these, that would show in the prediction log's `model_version` fingerprint, which is computed from those files. To check on the Mac after `git pull` and `python scripts/train_v2.py`: `git status` should show `results/v2/` unchanged.
+
+## 2026-10-19 — Round 18 (branch `live`): map polish and `--lang uk`
+**No model, data, threshold or result changed** (`results/`, `models/`, `data/` untouched; replay test, forward-test self-test and the round-17 offline end-to-end all pass).
+
+### 1. Colours: neighbouring bins clearly apart in both themes
+- **Cause:** the round-17 ramps were steps of the reference blue ramp, picked to satisfy the ordinal validator (monotone, gaps in lightness, faintest/darkest fill 2:1 on the page). Measured now: neighbouring bins were only 9.5 to 10 apart in OKLab x100 (light 9.7 to 14.4, dark 9.5 to 15.6), and the two darkest dark-mode bins (the ones most oblasts fall in at H = 1) were the closest pair, 9.7. The validator never asked for more.
+- **Fix:** the lightness range is stretched to what the page colour allows (light mode darker than step 700 is allowed, dark mode lighter than step 100 is allowed; the 2:1 floor applies only to the faint end) and the hue drifts a little along the ramp (violet-blue at the dark end to sky blue at the light end, 10 degrees in light mode and 22 in dark mode, the validator allows 40). Found by a small search (maximise the smallest neighbour difference under: text at least 4.6:1 on every fill, faint end at least 2.02:1). New ramps: light `#61b9ff #2f8ad4 #005da2 #003465 #00112b`, dark `#374991 #5173bc #6ea0e8 #a0cdff #edf6ff`; still five bins with the same edges (10, 25, 50, 75%).
+- **Result:** smallest neighbour difference 14.5 (light) and 13.5 (dark) normal vision, 14.5 / 13.3 under protanopia and deuteranopia (Machado et al. 2009, severity 1, the validator's own model); lightness stays monotone (smallest step 0.134), so the order survives every colour-vision deficiency, and the percentage and triangle on every oblast do not depend on colour. The dataviz ordinal validator passes in both modes (monotone, gaps, faint end 2.07:1 and 2.09:1, single family). Added to `check_forecast_map.py`: neighbour difference under normal, protan and deutan vision (at least 12), hue spread.
+- **Honest limit:** the light-mode top bin is nearly black. At H = 6 most oblasts are in it, so that map is dark overall; that is what the probabilities are, and the colour only has so many steps between "faint" and "black". Four bins would be easier to tell apart (about 18 to 20 apart) but would lose the 50 to 75% / 75% and over split; kept five, say if you prefer four.
+
+### 2. Freshness
+`live_api.ago()`: anything under one minute, and anything ahead of our clock, is "just now" ("щойно"); then "N min before now" up to 3 hours, then "N.N h before now". Used for both the "newest alert start" and the "active-alerts list last updated" parts, so the terminal and the page cannot differ. The "-2 min before now" came from the active-alerts list's lastUpdate, which is not cut at our clock the way the alert starts are. Tested at 12 gaps from -125 s to 5 h, and end to end against a fake API whose clock is two minutes ahead of ours: both languages say "just now", no negative number anywhere. In the English baseline the only text change is "(0 min before now)" becoming "(just now)".
+
+### 3. Hover: a fixed panel instead of a tooltip
+The tooltip was the browser's native SVG `<title>` tooltip, which the page cannot position (it covered Kharkivska's number). All `<title>` elements are gone. A panel above the map (reserved height, so nothing jumps) shows the oblast's name, whether an alert is running at the origin hour, and the three probabilities with their thresholds and triangles, when the pointer is on the oblast or it has keyboard focus (each oblast has `tabindex=0`); the Kyiv call-out shows the Kyiv City block. It is CSS only (`:has()`), so the page stays free of script; **browser support: Chrome 105, Safari 15.4, Firefox 121 or later** (December 2023). In an older browser the panel says that the table under the map has every number. The oblast under the pointer gets a heavier outline. Tapping on a phone sets the hover state in current mobile browsers; I could not test a real touch device, only a 390 px viewport. Screen readers: the per-oblast `<title>` is gone; the panel is an `aria-live` region and the table has everything.
+Checked in headless Chromium: no network request at all when the page is opened, no `<title>` in the map, the panel shows the right block with the pointer on Kharkivska, Luhansk, Crimea and the Kyiv call-out and with keyboard focus on Lvivska, it returns to the default text when the pointer or focus leaves, the horizon switch changes the label on the oblast (63% / 85% / 94% for Kharkivska), and the element under the pointer at the label's position is still the oblast's own group. (With the pointer at the centre of Kyivska's bounding box the panel shows Kyiv City, as the city sits there; Kyivska's own block is tested by the generated checks.)
+
+### 4. `--lang uk`
+- `predict.py --lang {en,uk}` (default en) for `--now` and `--at`; the terminal output and the map (page text, legend, table, header, notes, freshness, calibration note, status lines, the `--at` sentences, column names, month names, durations as "хв / год / дн.") come from `src/i18n.py`, one English and one Ukrainian version per text (102 texts), checked to have the same placeholders, English without Cyrillic, Ukrainian with it.
+- **English is unchanged:** the nine fixed commands of the round (`--now` default, with `--oblast`, with `--model v1`; `--at` for all oblasts, one oblast with the hour rounded, a training hour, near the end of the data, Kyiv City, a partly scored hour) and the status lines for 13 origin hours (every status branch, including the three feed-outage ones) were captured before and after the refactor: identical, after masking the random temp directory name, except the intended "just now". One pre-existing quirk kept on purpose: the English duration for one minute is "1 minutes".
+- **Oblast names** are a hand-written list (`OBLAST_UK`), not machine translation, and are checked mechanically: each name must map back to its own unit through `UK_TO_OURS` (the table the data pipeline maps the API's state names with, so a wrong name would also have broken the data), `UK_TO_OURS` must contain nothing else, the state-level names that occur in the saved API files ("Миколаївська область", "м. Київ") must be spelled exactly as in the list, letters Ukrainian only and capitalised, all short forms different. **Not checkable here:** "м. Севастополь" (and Crimea beyond that it ends in "Республіка Крим", which `api_check.py` looks for): they are in none of our data; they appear only in the hover panel and, for Crimea, as the grey area's label. Luhansk is the API's spelling.
+- **The sentences are my own Ukrainian**, not reviewed by a native speaker: please read the page once (`--at "2026-08-20 12:00" --all --lang uk` needs no API) and tell me what to change. Tables are in Ukrainian alphabetical order (і, ї, є in their place; checked). Terminal and page in Ukrainian contain no English (checked with a word list; the model fingerprint, file paths and the `--model` flag names stay).
+- **Not translated:** error messages and refusals that name a command (`Cannot forecast now: ...`), `--help`, `data/predictions/log.csv` column names. `--oblast` still takes the English names (a Ukrainian name typed there is not understood; not asked for, not added).
+
+### Other
+- `src/i18n.py` is new; `scripts/forecast_map.py`, `scripts/live_api.py`, `scripts/predict.py` use it; the badge ("!") is now placed left of the wider of the name and the percentage line (it sat on the first letter of "Dnipropetrovska" / "Дніпропетровська"). README (one sentence) and DETAILS (map section: colours, panel, freshness, language; layout line for `src/i18n.py`) updated; links and fenced blocks checked.
+- Tests: `python scripts/check_forecast_map.py` now has 114 checks, all pass (both languages for the page, panel, names, i18n, freshness, colours, `--at` in both languages).
+
+### Mac commands
+git pull; source .venv/bin/activate; python scripts/check_forecast_map.py; python scripts/predict.py --at "2026-08-20 12:00" --all --lang uk; open output/forecast_map.html; then with the token as before: python scripts/predict.py --now --lang uk; open output/forecast_map.html (and without --lang for English).
+
+## 2026-10-19 — Round 19 (branch `live`): the map becomes a product page
+**No model, data, threshold or result changed** (`results/`, `models/`, `data/` untouched; replay test, forward-test self-test and the offline end-to-end pass).
+
+### What was built
+- `scripts/forecast_map_page.html` (template: HTML, CSS, script) + `scripts/forecast_map.py` (fills it) replace the round-17/18 page. Still one local file written after `predict.py --now` and `--at`; **inline script is now used**, and there is still no request of any kind when it is opened (no address, link, external script/style/font/image; the script has no network function; the page has exactly two `<script>` tags, the data and the code; confirmed by a headless browser: zero requests).
+- Design: dark, map-first. Top bar; map full height on the left with the 1 h / 3 h / 6 h segmented control above it; side panel on the right; a footer line that is always on screen ("Навчальна модель, не для рішень щодо безпеки: слідкуйте за офіційними сповіщеннями про тривогу."). One design system: colour tokens (surfaces, text, accent, focus ring, status, alert, the map's greys), a spacing scale (4 to 32 px), a type scale (12 to 56 px), radii and the system font stack; the test lints that no colour and no font size is used outside them (the map's SVG labels excepted).
+- First screen: the user's sentence ("Ймовірність, що в області почнеться нова повітряна тривога протягом 1, 3 або 6 годин"), a freshness pill, the model version (v1/v2 + the fingerprint of the prediction log), the origin hour in Kyiv time and UTC, a "Як читати" popover (six short explanations; below them the notes: freshness line, calibration note, thresholds, status lines).
+- Interaction: hover outlines an oblast and shows name and number in the corner of the map; click, Enter or Space selects; Esc, "all oblasts" or a click on the empty map clears; arrows, Home and End on the segmented control. Nothing selected: the top five for the chosen horizon (buttons) and "all oblasts (24)". Selected: big percentage, three bars for 1/3/6 h with the threshold tick (a bar switches the horizon), alert status, and the history chart.
+- History chart: from `data/predictions/log.csv` when the page is written: the runs of the same model version only (v1 and v2 are never mixed), one point per origin hour (the latest run of that hour), the last 24, a cut-off run skipped, axis 0 to 100%, threshold as a dashed line. Fewer than two runs: the page says so. `--at` pages (replays; the log never contains them) say there is no history.
+- Phone (820 px and narrower): the panel is a bottom sheet (peek with a one-line summary, tap the handle or an oblast to open); the pills scroll sideways; the oblast names are hidden on the map and the percentages enlarged; **Kyiv City is a button above the map** (the call-out is too small to read at that width).
+- Ukrainian is the default language, `--lang en` for English. New i18n texts for the page (about 45 more, 124 in all, same placeholder check), the old page texts were removed.
+- `scripts/check_forecast_map.py`: kept the name checks, the Ukrainian-name check, the i18n parity, the freshness wording and the ramp checks; rewritten the page checks for the new page (data block against the forecast, 27 units, class/percentage/triangle/badge per unit and horizon, top bar, popover, footer, call-out, fallback table, self-containment, design lint, `node --check` of the script) in both languages; added the history reader and the page tokens; `--at` in uk, en and with no `--lang` (must be Ukrainian). New `scripts/check_forecast_map_browser.js` (headless Chromium via playwright, run by the check script when node and playwright are present).
+
+### Decisions and things you should know (not in your text)
+1. **Dark only.** You asked for dark, so the light theme of rounds 17/18 is gone (no `prefers-color-scheme: light`). The light ramp and its checks were removed with it; the dark ramp (the round-18 one, unchanged) keeps all its checks.
+2. **Ukrainian as the default also changes the terminal output** of `predict.py` (one `--lang` flag drives both, as in round 18). `--lang en` is byte-identical to what English output was (the nine fixed commands, compared before and after: identical, except the "just now" wording of round 18). Nothing else in the repo parses `predict.py`'s output (checked).
+3. **The freshness pill measures the age of the page** (the viewer's clock minus the time `predict.py` made it; it keeps counting while the page is open), because a static file can only know that; green under 15 minutes, amber under an hour, red after (with "run again"). How far the API itself lags is in the about section as before ("A quiet spell and an API that is behind look the same from here"). The thresholds 15 and 60 minutes are my choice. On a replay the pill is neutral and says it is a replay.
+4. **Tab order** goes through the 24 oblasts in the order of their ISO codes, not geographically; the top five and the "all oblasts" list are in probability order and are the faster way to an oblast by keyboard.
+5. **Hover/selection outlines** are separate shapes drawn above the map (the first try with `<use>` painted a filled copy over the label; found by looking at the screenshot, fixed). The centre of Kyivska oblast's bounding box is occupied by Kyiv City, so a pointer there hovers the city (as it should).
+6. **`:has()` is no longer used** (the round-18 fixed panel needed it). The page needs ordinary current browser features (CSS grid, custom properties, `dvh` units, `MutationObserver`); without JavaScript it shows the map for 1 h and a table of every number.
+7. The Ukrainian sentences are still my own and unreviewed by a native speaker; "м. Севастополь" still cannot be checked. Please read the page once.
+
+### What I looked at (headless Chromium, screenshots, by eye)
+Desktop 1440 x 900: default view, selected oblast with a hover elsewhere, 6 h, the popover, English, a replay with the training-period banner. Phone 390 x 844: default (peek), sheet open, an oblast selected, scrolled. First renders showed real problems, all fixed before this commit: a grid that let the page grow to 894 px on a phone (no `minmax(0,1fr)` column), the footer line pushed under the sheet (grid rows depended on whether a banner existed; sheet slid under the footer instead of resizing), the map centred and hidden behind the open sheet (now top-aligned, sheet 46% high), a stray gap in the model pill, the highlight overlay painting over labels, a badge on a letter. Remaining small things: a few long names touch their oblast's border at 1440 px ("Тернопільська"), the 5 bins make the whole 6 h map light (that is the data: most oblasts are above 75% at 6 h in the synthetic demo; the real numbers are similar in a busy period).
+**Tests proving the tests:** breaking the page on purpose (top four instead of five, wrong freshness threshold) made 9 browser checks fail; restored, all pass.
+
+### Tests
+`python scripts/check_forecast_map.py`: about 220 checks, all pass (of which 60-odd in the headless browser). Offline end-to-end against the fake API (real saved days as of 2026-10-10 12:37 UTC): default, `--model v1`, `--model v2`, `--oblast Kyivska`, `--lang en`: every probability, alert flag and threshold in the page's data block equals the model's own output on the forward-test features, the fingerprint, origin hour, notes, footer and badges are right, the history's last run is this run, no token text anywhere; a refused forecast (day 2026-10-09 answered 500) exits 1 and writes no page. The browser checks need node and the `playwright` npm package; without them `check_forecast_map.py` says "skip" and the rest still runs (on your Mac they are probably skipped).
+
+### Mac commands
+git pull; source .venv/bin/activate; python scripts/check_forecast_map.py; python scripts/predict.py --at "2026-08-20 12:00" --all; open output/forecast_map.html; then with the token as before: python scripts/predict.py --now; open output/forecast_map.html (and add --lang en for English).
+
+## 2026-10-19 — Round 19 polish (branch `live`): percent only, short origin pill, labels clear of borders, Ukrainian wording
+**No model, data, threshold or result changed.** `results/`, `models/`, `data/` untouched; replay test, forward-test self-test and the offline end-to-end pass; the English terminal output (`--lang en`) is identical to the baseline of round 18 for all nine fixed commands, except the "just now" wording of that round.
+
+1. **Percent only.** Every probability and threshold on the page is a whole percent: the bars and threshold chip in the side panel ("не нижче порога 25%"), the threshold label and the points of the history chart, the thresholds line, the fallback table, and the calibration note in the popover ("18% проти 20% на 1 год"). The freshness text in the popover says "3 год", not "3.0 год". The terminal output keeps its decimals (calibration note, `above` line, tables): the page versions are separate (`calibration_note(..., percent=True)`, `ago(..., whole_hours=True)`). **Rounding caveat:** thresholds are rounded for display only; the triangle compares full values, so an oblast shown at 25% can be below a threshold shown as 25% (v2's H=1 threshold is 25.19%). Tests: no `digit.digit` in the page's text, labels, titles or the script's texts (Python, both languages, live and replay), and in the live page in every state (three horizons, selected, popover open) in the browser.
+2. **Origin pill** shows the Kyiv time only: "Година прогнозу: 15:00 (Київ)" ("Origin hour: 15:00 Kyiv"); on a phone only "15:00 (Київ)". The UTC hour is the first line of the popover's about section. The freshness pill's no-script text still has "UTC" (it is replaced as soon as the script runs). On a phone the pills now wrap to two rows (the map has spare height there; scrolling pills had hidden the origin pill).
+3. **Labels never touch an oblast border.** After load and on every resize a script measures each label (name lines, percentage, alert badge, over all three horizons) and keeps its whole box, with 3 px to spare, inside its own shape (and out of Kyiv City, which is a hole in Kyivska oblast). Order of attempts: full size; moved to the nearest place where it fits; shrunk (86% at most for the name, never below 6.5 px on the screen); the name dropped and the percentage alone, as large as fits (min 7 px preferred, 5 px at worst); finally the label is left out (the number is in the panel and on hover). **Result:** at 1440 and 1920 px nothing is left out; at 1440 px five small oblasts show the percentage only (Zakarpatska, Ivano-Frankivska, Ternopilska, Chernivetska and one more depending on the data), four are slightly shrunk; at 1100 px wide windows all names are dropped (they would be under 6.5 px) and one label is left out; **on a 390 px phone about six of the smallest oblasts have no label** (names were already hidden there; the phone percentage font went from 22 to 18 map units so more fit). The first version only checked the rectangle's outline and missed a coastline notch inside it (Mykolaivska at 1920 px); it now samples the inside too. Tested in a headless browser at 1440, 1920, 1100 and 390 px, in English, and after resizing 1440 to 1100 to 390 and back, with 1.5 px clearance (the fit uses 3 px): no label touches a border in any case; with the fitting switched off the test fails (five failures), so it is not vacuous. Cost: the script adds about 100 ms to load.
+4. **Ukrainian wording.** No long dash anywhere in the Ukrainian texts: em dashes became commas, colons or "означає"; en dashes in ranges became "від 10 до 25%" and "з 2026-09-28 по 10-17"; "4–5 вересня" became "4 і 5 вересня"; "(--model v2 — новіша)" became "(новіша: --model v2)". A test scans every Ukrainian text, the Ukrainian page (text, labels, titles, script texts) and the terminal output for U+2012 to U+2015 and the minus sign. "Ціль: ..." became "Що прогнозуємо: чи почнеться нова тривога протягом наступних H годин." The sentence "ймовірність, що почнеться нова тривога, — 63% ..." became "ймовірність нової тривоги становить 63% протягом 1 години, ..." (I reworded it, since a comma-and-dash sentence has no direct replacement). English texts are unchanged.
+
+### Looked at again (headless Chromium screenshots, by eye)
+Desktop 1440 x 900: default, an oblast selected, 6 h, popover, English; zoomed crops of the western and eastern oblasts to check label edges; phone 390 x 844: default, sheet open, an oblast selected, scrolled. Found and fixed while doing it: a double space in the origin pill, the origin pill cut off on a phone, tiny names in Ternopilska and Zakarpatska at the first attempt (now percentage only or at least 86%).
+
+### Tests
+`python scripts/check_forecast_map.py`: all pass (about 260 checks including the headless browser ones). Offline end-to-end against the fake API: default, `--model v1`, `--model v2`, `--oblast Kyivska`, `--lang en`: all OK, a refused forecast writes no page.
+
+### Mac commands
+git pull; source .venv/bin/activate; python scripts/check_forecast_map.py; python scripts/predict.py --at "2026-08-20 12:00" --all; open output/forecast_map.html; then with the token as before: python scripts/predict.py --now; open output/forecast_map.html.
+
+## 2026-10-19 — Round 20 (branch `live`): personal Telegram alert bot, hourly launchd job, thresholds with one decimal
+**No model, data, threshold or result changed.** The bot reads what `predict.py --now` already produces. Replay test, forward-test self-test and `check_forecast_map.py` still pass; `check_alert_bot.py` (new, offline, about a minute) passes.
+
+### 7. Thresholds with one decimal on the page (done first)
+Thresholds on the page now have one decimal ("25,2%" in Ukrainian, "25.2%" in English): the chip in the panel, the bar ticks, the history chart's threshold label and the thresholds line. **One addition you did not ask for:** probabilities stay whole percent, so "25%" against a "25,2%" threshold can still look wrong (25,4% shows as 25% and is above). Within one percentage point of the threshold the panel chip therefore also shows the probability with one decimal ("▲ 25,2%, не нижче порога 25,2%" / "▽ 25,1%, нижче порога 25,2%"); everywhere else nothing changes. The no-raw-decimal test now allows `25.2%` but still fails on `0.252`.
+
+### What was built
+- `scripts/alert_bot.py` + `config/alert_bot.conf`. After a `--now` forecast, a message when a watched oblast goes from below its threshold to at or above it for h=1. Defaults: м. Київ and Київська область at 50%; names (Ukrainian or English, full or short), thresholds and `cooldown_hours` editable in the file; `--check` shows how it was read and reports every mistake. Nothing while it stays above; at most one message per oblast per 3 hours (a crossing inside the cooldown is held back and counted in the status line); a message per oblast, so Київ and Київська crossing together are two messages.
+- Message, Ukrainian, five lines: oblast and the threshold crossed; "Протягом 1 год: 61%, 3 год: 90%, 6 год: 97%."; "Тривога на годину прогнозу: ні/так."; "Година прогнозу: 15:00 (Київ)."; "Навчальна модель, слідкуйте за офіційними тривогами." Plain text (no Markdown parsing), no long dash, tested for summer (+3) and winter (+2) Kyiv time.
+- `--test` (one test message, no forecast), `--dry-run` (print, send nothing, change nothing), `--check`, `--find-chat-id`.
+- `src/keychain.py` (secrets only from `security find-generic-password -w`), `src/tg.py` (Telegram client, failures reduced to the HTTP status; 0 = no answer), `Client(token=...)` in `src/ukrainealarm.py` and `predict.py --now --token-from-keychain` (the token is read into memory in the predict process only; the environment-variable way for manual runs is unchanged).
+- `scripts/hourly_job.py` (`predict.py --now --token-from-keychain`, then the bot, then nothing; the bot is skipped if the forecast failed; the log gets two status lines per run), `scripts/install_hourly.sh`, `scripts/uninstall_hourly.sh [--delete-secrets]`. launchd: every hour at minute 7, `~/Library/LaunchAgents/local.ukraine-air-alerts.hourly.plist`, only PATH in its environment, status log `~/Library/Logs/ukraine-air-alerts/hourly.log`.
+- `scripts/fakes/` (fake Telegram, Ukraine Alarm API, `security`) and `scripts/check_alert_bot.py`.
+
+### Decisions you should know (not in your text)
+1. **Hand-off file.** `predict.py --now` now also writes `output/last_forecast.json` (git-ignored, no secrets); the bot reads it, not `data/predictions/log.csv`, because the log does not hold the alert state and I did not want to change its header. The bot's own memory is `output/alert_state.json`.
+2. **Crossing needs a previous reading.** The first reading of an oblast, the first after the model changed (v1 to v2, different fingerprint) and the first after a gap of more than 2.5 hours only record where it stands and send nothing, even if it is above the threshold. So installing the job while Київська is already above 50% gives no message until it falls and rises again.
+3. **"Whether an alert is running now" is the state at the origin hour** (the model's own `now`), as on the map; the message says so ("на годину прогнозу") and gives the origin hour next to it.
+4. **The watch thresholds are yours, not the model's frozen thresholds** (those are 25,2/42,7/42,7% for v2); the comparison is on the full probability, not on the rounded percent.
+5. **Sleep.** launchd does not drop a run that falls into sleep: it runs the job once when the Mac wakes (not once per missed hour). After a gap of more than 2.5 hours that run only records (point 2), so missed hours really are just missed. It cannot be configured to skip the wake-up run.
+6. **A failed send is retried next hour** (the oblast keeps its old state, so it crosses again), and the failure is in the log as a Telegram HTTP code; a missing keychain item is named in the status (the item's name is not secret).
+7. **Keychain permission.** The first time `security` reads an item macOS may ask whether it may; an unattended job cannot answer. `alert_bot.py --check` reads each item once (and says so if it is not readable), so run it in Terminal and choose "Always Allow" before installing; the install script runs the same check and refuses to install otherwise. If the login keychain is locked at a run, that hour fails with a status line and is missed.
+8. `config/alert_bot.conf` is committed (no secrets), so your edits show in `git status` and a `git pull` that touches it would conflict; keep the edits or say if you want a git-ignored local copy instead.
+
+### Not tested here
+The real Telegram API, the real macOS keychain and launchd (this machine has none of them). Tested instead with fakes: a Telegram server over real HTTP, a `security` that logs its arguments, a `launchctl` that logs its arguments, and the real Ukraine Alarm days as of 2026-10-10 12:37 UTC. The first run on your Mac is the test of the three; `--check`, `--test` and `--dry-run` exist to make that first run safe.
+
+### Tests (check_alert_bot.py)
+Config (defaults, spellings, 8 kinds of mistakes); the message; the rule in 12 cases (below to above, exactly at, staying above, falling, cooldown at 1 h / 2 h 59 / 3 h, first run, model change, gaps of 2 and 5 h, per-oblast thresholds); the bot against the fake Telegram (once, never twice, still above, cross again inside and after the cooldown, two oblasts, stale, no forecast, a 500 and its retry, wrong chat 400, wrong token 401, missing items, no server = HTTP 0 with no address in the output, dry run, `--test`, `--find-chat-id` with and without messages and with a wrong token, `--check`); secrets (no output, log, state, forecast file, page, prediction log or plist contains a secret; every keychain call that asks for a secret ends in a bare `-w`; the only keychain write in the repository is the hint without a value); the job (order, skip on failure, status lines only, the plist, `bash -n`); install and uninstall with fakes (refuses with a missing item, bootout then bootstrap, uninstall, `--delete-secrets` only on request); the whole chain with the real forecast: Kyivska 61% and Kharkivska 63% crossed (м. Київ 46% did not), exactly those messages arrived, with the forecast's own numbers and "15:00 (Київ)". Breaking the rule, or printing the Telegram address on a failed call, makes it fail.
+
+### Mac commands (one per step)
+1. git pull
+2. source .venv/bin/activate
+3. python scripts/check_alert_bot.py
+4. (Telegram, in the app) @BotFather, /newbot, copy the token
+5. security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-bot-token -w
+6. (Telegram) open your new bot and send /start
+7. python scripts/alert_bot.py --find-chat-id
+8. security add-generic-password -a "$USER" -s ukraine-air-alerts.telegram-chat-id -w
+9. security add-generic-password -a "$USER" -s ukraine-air-alerts.ukrainealarm-token -w
+10. python scripts/alert_bot.py --check
+11. python scripts/alert_bot.py --test
+12. python scripts/predict.py --now --token-from-keychain
+13. python scripts/alert_bot.py --dry-run
+14. bash scripts/install_hourly.sh
+15. tail ~/Library/Logs/ukraine-air-alerts/hourly.log
+To stop: bash scripts/uninstall_hourly.sh (add --delete-secrets to remove the keychain items too).
+
+## 2026-10-19 — Round 21 (branch `live`): the project wrapped up for the public
+**No model, data, threshold or result changed.** README rewritten as a portfolio page, one screenshot added, `.gitignore` and one DETAILS reference touched. Tag and merge steps below.
+
+### What changed
+- `README.md` (89 lines, was 140): pitch, the map screenshot, what it predicts and why it is hard, one results table (v1 test, forward test, v2; each next to train frequency, same hour yesterday, same as now), five bullets on how it works, limitations, how to run, the "study model, follow the official alerts" section, links. English, no long dashes (checked: no character above ASCII in the file), no hype words (checked against a word list). The old README's long result notes, the figures section and the build story moved nowhere new: they are all still in `docs/DETAILS.md` and `results/`, and the old README is in git history (`kse-submission` tag, 5c8cede, has the submitted one).
+- **Every number in the README is parsed, not typed.** The tables come from the cells of `results/test_table.md`, `results/test_table_by_period.md`, `results/forward_api/forward_table.md` and `results/v2/test_table.md` (the CSVs hold 4 decimals, so rounding them again changed the last digit in 4 cells: the first draft read 0.523 / 0.613 / 0.653 / 0.512 where the tables say 0.524 / 0.612 / 0.654 / 0.513; the md cells are the authority and the draft was regenerated). The prose figures (67.5%, 12.1%, 18.0%) are read from `persistence_vs_target_a.md`, `test_table.md` and `forward_table.md`. Claims in the text are asserted in the generator: Brier better than train frequency in every row, same hour yesterday ahead of the model on Sep 4-5 at every H, the H=6 AUC edge over train frequency in the v1 test under 0.05. The generator is a scratch script, not in the repo.
+- **Rule check: baselines next to every number.** The screenshot shows model probabilities without baselines. To keep the rule, its caption gives the model and the three simple rules for the selected oblast at that hour (read from `predict.py --at ... --oblast Kharkivska` output) and says it is one hour as an illustration, not evidence of skill.
+- **Rule check: the Sep 4-5 rows** (7-day features scaled from observed hours) are reported on their own, next to the pooled v1 row, with all four predictors. The forward test and v2 are on the API, which has no outage, so nothing there is scaled; the README says the three tests are not pooled.
+- **Test window:** untouched (24 days for v1, 41 for the forward test, 20 for v2).
+- `docs/img/forecast_map.png` (203 KB): `python scripts/predict.py --at "2026-08-24 17:00" --all --lang en`, then headless Chromium at 1440 x 900 with Kharkivska clicked. The hour is a real forecast inside the v1 test window (after the end of training, before the outage), model v1. I looked at the screenshot: labels clear of borders, footer line visible, nothing cut.
+- `docs/DETAILS.md`: the run-order line that said README "Try it" now says "How to run". Links in the README (6 anchors, 1 image) checked against DETAILS' headings: 0 problems. Fenced blocks have no `#` and no backticks. Referenced paths exist.
+- `.gitignore`: `ai-log.txt` added (see below).
+
+### History scan before pushing anything public (item 4)
+Method: `git grep -I -i -n -E` over `git rev-list --all` (every commit of every ref, 100% of what is in the repo) for: Telegram bot token shape, 8-hex-char id + colon + 20 or more characters (the alerts.in.ua style), the prefix of the old alerts.in.ua token typed in chat once, GitHub / Slack / AWS / Google / OpenAI-style keys, private key headers, `Bearer` values, and a long value assigned to `token`, `secret`, `password`, `api_key` or `authorization`. **First run was a false negative** (zero hits everywhere): the assignment pattern used PCRE syntax that `git grep -E` does not know. Fixed (`-i`, `[[:space:]]`, grep errors printed) and a positive control (`UA_ALARM_TOKEN`, 373 hits) confirmed the scan works.
+**Result:** no token-shaped string and no private key anywhere in history. The only hits are the keychain item names (`ukraine-air-alerts.telegram-bot-token` and the other two, in `src/keychain.py`, scripts, docs and this log) and obviously fake strings in the offline tests (`scripts/fakes/`, `check_alert_bot.py`). The old alerts.in.ua token is not in any file or commit. Also checked: e-mail addresses in the history are third-party ones (a support address in the data, a GDELT contact in an error message, the noreply address of the commit trailers) and the project owner's own, which is the commit author and appears in `ai-log.txt`; no phone numbers; `/home/user` paths in logs (a sandbox path, nothing private).
+**Raw files in history:** `data/raw/` holds the public official and volunteer datasets (29.6 MB and 8.5 MB), `data/telegram/kpszsu_posts.csv` public channel posts (4.3 MB), `data/api_archive/` the Ukraine Alarm API's own answers (74 day files), `data/api_raw/` one file. Nothing private. Two things I did not check and cannot: the licence of the two raw datasets, and whether the Ukraine Alarm API terms allow republishing its answers. Reported to the user. There is no LICENSE file.
+
+### ai-log.txt: the request conflicts with what is already on `main`
+Item 4 says ai-log.txt must not be committed. **It already is, on `main`** (commit 34220b4, merged by the owner as PR #3 on 2026-10-12, which is why `origin/main` is 4d9b08f and not 5c8cede) and on the remote branch `ai-log`. It is 0.8 MB of tool calls and outputs. The scan above covers it: no token shape in it. It does contain the owner's e-mail and the session's trigger and session ids.
+I cannot make it "not committed" without rewriting history and force-pushing, which this round forbids and which would break the tag's promise. What I did, without rewriting anything: `.gitignore` now ignores it, and **the merge commit into `main` will delete the file from `main`'s tree** (a merge commit with the file removed, still two parents). It stays in `main`'s history (34220b4) and on `origin/ai-log`; anyone can still read it. To remove it for real the owner must rewrite history themselves and delete the `ai-log` branch; I did not do it and say so plainly.
+
+### Tag and merge
+- Local annotated tag `kse-submission` created on 5c8cede (verified: "Round 13: README cut to 115 lines"). **The push of the tag failed here: HTTP 403 from the git proxy** (three more tries with backoff, same answer; the proxy lets branches through and refuses tag refs, and no GitHub tool here can create a tag). Per the order in the task ("before touching main"), **I did not touch `main`**: no merge, no push to it, local `main` unchanged. The owner pushes the tag from the Mac, then the merge follows (commands given in the reply).
+- A dry run on a throwaway branch (`origin/main` + `git merge --no-ff --no-commit live`): clean, no conflict, 132 files changed; `PROCESS_LOG.md`, `README.md` and `.gitignore` merged automatically. The throwaway branch is deleted.
+- `5c8cede` is already an ancestor of both `origin/main` and `live`, so a normal merge keeps the submitted state in `main`'s history too; the tag makes it findable.
+
+### Other branches on the remote that go public with the repo
+`ai-log` (holds ai-log.txt), `claude/zen-einstein-gvc3sf`, `news`, `telegram`, plus `live` and `main`. Not touched.
+
+## 2026-10-19 — Round 22 (branch `live`): trying to improve the model honestly. PROTOCOL (written and committed before any model number exists)
+**Scope.** No change to v2 and none to `predict.py --now` (neither the models, the thresholds, the features nor the code path). This round develops candidates and prepares the final comparison; it does not switch anything. The user's order of the round: protocol first, committed before any number, then experiments, then one report commit (a second commit in the round, on purpose: the pre-registration has to be in git history before the results; CLAUDE.md's "one commit per round" gives way to that explicit request).
+**What has been done before this text was written:** a timing probe (how many seconds one fit of each library takes on 940,000 rows, no metric printed or looked at), the installation of `xgboost` and `catboost`, and reading the code. No score of any new feature or model has been computed.
+
+### 1. Data and what counts as development
+- Data: the combined official + API dataset at the existing cut (2026-10-18 00:00 UTC, `data/combined/MANIFEST.md`, SHA-256 `721cf775…f8c14`), no outage mask (the API covers 2026-08-29..09-02), hourly origins, the 24 units, targets (b) "a new alert starts in (t, t+H]" for H = 1, 3, 6, exactly as v1 and v2.
+- **Development = rolling-origin validation inside 2026, six 2-week folds immediately before 2026-09-28:** F1 2026-07-06..07-19, F2 07-20..08-02, F3 08-03..08-16, F4 08-17..08-30, F5 08-31..09-13, F6 09-14..09-27 (84 days, UTC days of the origin). For each fold the training set is **every usable origin whose target window closes by the fold's first instant** (expanding window, from 2022 on), the validation fit uses windows closing by fold start minus 7 days, and the validation week is the 7 days before the fold (early stopping and nothing else), the same scheme as `train_v2.py` with `test_start` = the fold start. Origins of the fold: all usable origins from the fold start to its end whose window lies inside the data.
+- **The window 2026-09-28 to 2026-10-17 is not used for any choice**: not for feature groups, model family, hyperparameters, tree counts or the selection rule. (Two uses that are not choices of the candidate: it is in the training data of the final fit of a selected v3, and the last train week 10-11..10-17 gives v3's F1 thresholds, as for every model in this project. Both are written here so nobody has to wonder.)
+- **The final test is data after 2026-10-19 that does not exist yet.** This round only prepares candidates and the scorer (section 7). Folds F1..F4 are official data (plus the Aug 19-20 patch) and F5..F6 API data: a source change inside the development window, and all dates after the outage have complete 7-day features because the API covers them (nothing is scaled; the "scaled 7-day features after the outage" rule does not arise in this round). F5 contains the outage dates (08-31..09-02) with API data.
+- **The reference is "v2-reference"**: LightGBM with exactly v2's features (the 14 in `src/features.py`), PARAMS, MAX_TREES = 2000, early stopping 100 on the validation week, retrained for every fold. It is v2's recipe, not v2's saved models (those were trained on data that includes the folds). Every comparison is against it, and every table has the three simple rules next to it: same as now (persistence), same hour yesterday, train frequency (fitted on each fold's training rows only).
+- Metrics: within-oblast AUC (mean over the oblasts with both outcomes in the fold) and Brier. The headline number of a configuration is the **mean of the AUC over H = 1, 3, 6** (and likewise of the Brier), with every H reported too. Fold by fold for everything.
+
+### 2. Feature groups (each tested by adding it to the base, same model and settings, ablation on the six folds)
+Everything below is computed from the alert start/end instants of the combined dataset and uses only what is known at the origin t. Neighbour-type information (other oblasts) uses only time before t, never the instant t or later (CLAUDE.md: neighbours = the last completed hour). "Bin" = a 10-minute bin [t0+10k min, t0+10(k+1) min) on a grid anchored at an hour boundary, so t is a bin boundary and "the last bin" is [t-10 min, t). An oblast "is in a bin" when one of its raw (not restart-joined) oblast episodes overlaps the bin.
+- **A: finer timing (14 features).**
+  - own, from bins: `own_cover_10m` (1 if in the last bin), `own_cover_30m` (share of the last 3 bins), `own_cover_1h` (share of the last 6 bins).
+  - own raions (the 2020 raion list, raion-level episodes before the half-of-raions rule): `raion_frac_now` (share of the oblast's raions under alert at the instant t, own state, allowed like `now`), `raion_frac_max_1h` (the maximum of that share over the instants t-60, -50, ..., t min), `raion_starts_30m` (raion alerts that started in (t-30 min, t]).
+  - nationwide, over the 24 modelled units: `nat_now` (units in the last bin), `nat_max_1h` and `nat_max_3h` (the maximum of the per-bin unit count over the last 6 and 18 bins), `nat_starts_1h`, `nat_starts_3h` (oblast alert starts in [t-1h, t) and [t-3h, t)).
+  - how the wave moves: the **upwind neighbours** of an oblast are its land neighbours (`data/neighbours.csv`) whose centre lies east (longer longitude) or south (lower latitude) of its own centre (centres: administrative centres, hand-written in `src/geo_centres.py`, also used for the weather). `up_any_30m` (share of them in at least one of the last 3 bins), `up_any_60m` (the same over the last 6 bins), `up_new_60m` (number of them in the last 6 bins and in none of the 6 bins before). NaN when an oblast has no upwind neighbour; the models take NaN as it is.
+- **B: massive events (3 features).** A **massive moment** is a bin in which at least **15** of the 24 units are in the bin. A **massive event** is a run of massive moments; a run that starts less than **3 hours** after the previous run's last massive moment is the same event (so an event's start is known when it starts). `hours_since_massive` (hours from the start of the last event that began before t to t; 720 if none within 30 days, as `hours_since_end`), `massive_14d` (number of events that began in [t-14 d, t)), `massive_now` (1 if the last bin is a massive moment). The threshold 15 and the 3 hours are fixed here and will not be changed after seeing how often it happens; if events turn out rare in the development window, that is reported and the group is judged by the same rule.
+- **C: weather per oblast centre (6 features), only if the data can be had.** Open-Meteo Historical Weather API (hourly; archive, ERA5-based), one point per unit at its centre (`src/geo_centres.py`), variables `wind_speed_10m`, `cloud_cover`, `precipitation` and, only if that API accepts it (to be seen at the first request, it is not in its documented list), `visibility`. Features use only stamps up to and including t: `wind_t`, `cloud_t`, `precip_1h` (the stamp t, which is the sum of the hour that ends at t), `precip_3h` (the stamps t-2..t summed), `vis_t`, `vis_min_6h` (the minimum over t-5..t; both absent if visibility is not offered). **Plain caveat that stays with the result:** these are reanalysis values for hours up to t; in live use the nearest thing is a short-range forecast or analysis for those hours, so a gain here is an upper bound of a live gain. If the network blocks the download, group C is not run, the Mac command is given, and it is run later once, by the same rule, against the same base (the folds do not change, and it counts as one more look at the development window).
+- Reported as descriptive only (not used by any rule): the three sub-blocks of A (own, nationwide, wave) added alone.
+
+### 3. The ablations
+Configurations, all LightGBM with v2's PARAMS, per fold and per H: **base** (the 14 features); **base + A**; **base + B**; **base + C** (if available); and the union of the groups adopted by the rule of section 5, run once after that rule. The three simple rules are scored on the same rows.
+
+### 4. Models (after the feature set is fixed by section 5)
+Three families on the best feature set, each with the same small fixed tuning budget: **4 configurations, tuned at H = 3 only, on the six folds; the winner of a family is the configuration with the highest mean over folds of the within-oblast AUC at H = 3 (ties: lower Brier), and that winner is then run unchanged at H = 1 and H = 6**. Early stopping is as above for every family (100 rounds on the validation week, at most 2000 rounds, learning rate 0.05 for LightGBM and XGBoost, 0.1 for CatBoost to keep it within the time; the oblast is a native categorical in all three; seeds fixed at 0).
+- LightGBM: L1 v2's (31 leaves, min_data_in_leaf 200); L2 15 leaves, min_data_in_leaf 400; L3 63 leaves, min_data_in_leaf 200; L4 31 leaves, min_data_in_leaf 200, feature_fraction 0.7, bagging_fraction 0.7 (every iteration), lambda_l2 10.
+- XGBoost (`hist`): X1 max_depth 6, min_child_weight 1; X2 max_depth 4, min_child_weight 50; X3 max_depth 8, min_child_weight 100, subsample 0.8, colsample_bytree 0.8; X4 max_depth 6, min_child_weight 50, reg_lambda 10, subsample 0.8.
+- CatBoost: C1 depth 6, l2_leaf_reg 3; C2 depth 4, l2_leaf_reg 3; C3 depth 8, l2_leaf_reg 10; C4 depth 6, l2_leaf_reg 20, rsm 0.7.
+Reported fold by fold: the winner of each family at each H, the whole grid at H = 3, next to the v2-reference and the three simple rules.
+
+### 5. The selection rules (written before any number)
+**Feature groups.** A group G is **adopted** only if all hold, comparing base + G with base, mean over H = 1, 3, 6:
+  (i) the AUC difference is > 0 and the lower end of its **95% day-bootstrap interval is > 0** (the 84 development days resampled with replacement, 1,000 resamples, seed 0, the predictions of the six folds pooled, within-oblast AUC recomputed on every resample for both models, the difference taken inside each resample);
+  (ii) the Brier difference (G minus base, point value) is ≤ 0;
+  (iii) the AUC difference (mean over H) is > 0 in at least **4 of the 6 folds**.
+The best feature set is base plus the adopted groups; if none is adopted, base. If two or more are adopted and their union has a lower mean-over-H AUC than the best single adopted group alone (point values), the best single group is used instead.
+**v3.** Candidates: the tuned winner of each family on the best feature set. A candidate is **eligible** only if, against the v2-reference (base features, L1): (i) the mean-over-H AUC difference is ≥ 0.003 and the lower end of its 95% day-bootstrap interval is > 0; (ii) the mean-over-H Brier difference is ≤ 0; (iii) it is ahead in mean-over-H AUC in at least 4 of the 6 folds. **v3 = the eligible candidate with the highest mean-over-H AUC (ties: LightGBM before XGBoost before CatBoost); if none is eligible there is no v3** and the report says plainly that nothing beats v2 beyond noise. At most one v3, ever, from this round. A candidate that is the v2-reference itself (same features, same L1) is not eligible.
+**Not corrected for the number of looks:** three groups and three families are looked at on the same 84 days; the interval is therefore a little too kind, and so is the day bootstrap itself (days inside one wave are correlated, so the intervals are narrower than they should be). That is why the real test is the later data, and why rule (i) also needs a minimum size.
+
+### 6. If there is a v3
+Trained by `scripts/train_v3.py` (reads the saved selection, so it can be rebuilt on the Mac): final fit on all origins whose window closes by the cut (2026-10-18 00:00 UTC), the **number of trees (or iterations) fixed in advance as the median over the six folds of the early-stopped count, per H** (no early stopping on the last weeks, which are not a choice window), thresholds = max F1 on the last train week (2026-10-11..10-17) from a fit on the windows closing by 10-11 with the same fixed count, as for v1 and v2. Saved to `models/v3/` (git-ignored like every model, rebuilt by the script). v3 is never the default of `--now` in this round.
+
+### 7. The scorer for the final test (`scripts/score_v3.py`, written this round, run only later)
+Compares v3 with the frozen v2 on the same origins, rebuilt from `data/api_archive/` (the combined dataset with a later cut; the archive has to be refreshed on the Mac first, `scripts/archive_api.py`). Origins from **2026-10-19 00:00 UTC**; it waits for **at least 14 full origin days** (24 origins each whose windows close inside the data; the cut is the start of the latest day file's date, so a possibly partial last day is excluded) and says "too early" with the count if there are fewer. Same rows for v3, v2, and the three simple rules (the train frequency from the production training rows, window closing by the cut). Within-oblast AUC and Brier per H, a day bootstrap (1,000 resamples, seed 0) of the difference, per-week blocks, precision/recall/F1 at each model's own validation-week threshold, v2 minus v3 shown next to the baselines. **Pre-written rule for the final verdict** (it reports; it changes nothing): v3 beats v2 only if the mean-over-H AUC difference is > 0 with the lower end of the interval > 0, the mean-over-H Brier difference ≤ 0, and v3 is ahead on mean-over-H AUC in at least two thirds (rounded up) of the full 7-day blocks. Otherwise v2 stays.
+
+### 8. Rules for myself in this round
+- A rule above is never edited after a number exists. A mistake in the protocol is reported as a deviation in the report, with the reason, and the original rule's verdict is given next to the changed one.
+- Every new feature goes through a truncation test (inputs cut at t, ends after t unknown), as `scripts/check_no_peeking.py` does, before it is used; the existing 14 features are unchanged and their frames must be byte-identical to `build_features`.
+- Old results (`results/`, `models/`) stay byte-identical; new outputs go to `results/round22/`. The only edit of an existing script is an optional `cut` argument in `build_combined` (default the old value, output checked against the manifest's SHA-256).
+- Compute: the three libraries are installed in this sandbox only (`pip install xgboost catboost`); nothing in the repo's requirements changes for v2 or `--now`.
+
+### Round 22: what was done, in order, and what came out (the protocol above was committed first, in 61c5a13)
+**Result in one paragraph.** One feature group helps by the pre-written rule (A, finer timing), two do not (B massive events, C weather). Of the three families, XGBoost and LightGBM tuned on A are eligible against the v2-reference and CatBoost is not; the rule picks **v3 = XGBoost X4 on group A** (trees 507 / 419 / 223 for H = 1 / 3 / 6). Its gain over the v2-reference is +0.017 within-oblast AUC and -0.0012 Brier (mean over H = 1, 3, 6), ahead in all six folds, 95% day-bootstrap interval of the AUC gain [+0.004, +0.030]. **That is a development result, with intervals that are too kind** (details below); v3 is not the default of anything. Fold-by-fold tables with the three simple rules next to every model number: `results/round22/stage1_groups.md`, `results/round22/stage2_models.md`; summary and tables in `docs/DETAILS.md`, "Round 22".
+
+**Stage 1, feature groups (LightGBM with v2's settings, mean over H, pooled 84 days, day bootstrap 1,000 resamples, seed 0).** A: AUC +0.0150 [+0.0007, +0.0297], Brier -0.0011, ahead in 6 of 6 folds: adopted. B: -0.0095 [-0.0192, +0.0009], Brier +0.0006, 2 of 6 folds: not adopted. C: -0.0007 [-0.0071, +0.0059], Brier -0.0002, 2 of 6 folds: not adopted. The union rule did not arise (one group adopted): feature set for stage 2 = A. Descriptive sub-blocks of A (no rule uses them): own timing +0.0077 [+0.0040, +0.0117] (6 of 6 folds), nationwide counts +0.0108 [-0.0029, +0.0252] (5 of 6), wave movement +0.0004 [-0.0042, +0.0054] (3 of 6). **A's gain is not stable over time:** per fold (mean over H) +0.042, +0.028, +0.029, +0.012, +0.022, +0.004 for F1 to F6; the newest fold has almost none, which can be noise or a real decay (the F5 and F6 folds are API data).
+**Stage 2, models on A.** Grids at H = 3 (mean AUC over folds): LightGBM L1 0.6411, L2 0.6344, L3 0.6437, L4 0.6419; XGBoost X1 0.6406, X2 0.6386, X3 0.6494, X4 0.6513; CatBoost C1 0.6349, C2 0.6341, C3 0.6387, C4 0.6350. Winners L3, X4, C3, run unchanged at H = 1 and 6. Against the v2-reference (mean over H): L3 +0.0125 [+0.0026, +0.0238], Brier -0.0011, 5 of 6 folds, eligible; X4 +0.0171 [+0.0038, +0.0300], Brier -0.0012, 6 of 6, eligible; C3 +0.0094 [-0.0022, +0.0217], Brier -0.0004, 6 of 6, **not eligible** (interval includes 0). Highest mean AUC among the eligible: X4, so v3 = XGBoost X4 on A. **The choice of family is not established:** X4 against LightGBM L1 on the same features is +0.0022 [-0.0025, +0.0066], 3 of 6 folds. Nearly all of the gain is the features (A), not the library.
+**v3 trained and saved** by `scripts/train_v3.py` (`models/v3/`, git-ignored): final fit on all origins with windows closing by 2026-10-18 00:00 UTC, trees fixed at the fold median, thresholds from the last train week (H = 1 / 3 / 6: 30.4% / 37.7% / 36.6%; v2's are 25.2% / 42.7% / 42.7%). `scripts/score_v3.py` written; run as it will be later it says "too early: 0 full days, the protocol waits for 14". Pipeline test (not a result, never to be quoted): the scorer was run on 2026-09-28..10-17 with a throwaway v3 (LightGBM) and with the real v3, with `--start` set so the output says "NOT THE VERDICT"; both models and v2 have seen those days in training, so any difference there means nothing. The code path (feature rebuild with a later cut, v2 and v3 scoring, baselines, bootstrap, 7-day blocks, the verdict) runs for both a LightGBM and an XGBoost v3.
+
+### Things that were not as the protocol assumed, and what I did
+1. **Visibility:** the archive API accepts the variable and returns null for every hour (all 40,272 hours of all 24 units), so it is not used; group C has 4 features, not 6. The protocol said "only if that API accepts it"; I read it as "if it delivers values". Stated in `data/weather/MANIFEST.md`.
+2. **The weather download took two sessions** (daily limit 429 at the start from the shared address, then an hourly limit midway, plus dropped TLS connections: the script now retries and resumes per unit). Group C was therefore run after A and B, not before; the protocol's "network blocks it" branch (a Mac command) was not needed.
+3. **Stage 2 grids on A were started before group C had finished** (to use the waiting time). They could not influence the choice: the feature set is fixed by the stage-1 rule, which came out as A after C was run; had C been adopted they would have been rerun on the new set.
+4. **The container restarted once** mid-run; every fit is cached per fold, so the runs resumed and the numbers do not depend on it (checked: the cached folds are what the report reads, six per configuration).
+5. **CatBoost** ran as four single-thread processes in parallel (one per configuration), which is why its wall time was hours; settings are the protocol's.
+6. **`build_combined(cut=...)`:** an optional argument, default the old cut. Output checked: the combined file's SHA-256 is still `721cf775…f8c14` with and without the argument. No other existing script was edited; `results/v2/`, `models/v2/`, `predict.py` and the README are untouched.
+7. **Leakage checks:** `scripts/check_features_extra.py` passes (hand-computed example, 2 checks on the massive-event rule, the weather lookup, 30 origins with 0 differing cells, and the negative control sees look-ahead in 81 (origin, oblast) cells).
+8. **Rules of CLAUDE.md in this round:** every model number is next to the three simple rules (fold tables); only within-oblast AUC and Brier are used for the choices (precision and recall come with the later scorer, at thresholds from the last train week); no plain accuracy; the test-window rule does not apply (development only; the later test is a new window); the outage rule does not arise (the combined dataset has no outage and nothing is scaled, F5 includes 08-31..09-02 with API data); `data/raw` untouched; no volunteer data used.
+
+### What to read into it, and what not to
+- v3 beats the v2-reference on the development folds by a modest AUC margin, mostly through finer own-oblast and national timing features. It has not been tested on anything it was not chosen on. The decision is the later scorer's, with the rule above, on 14 or more full days after 2026-10-19.
+- Three groups and three families were tried on the same 84 days; days are treated as independent in the bootstrap although alerts come in waves; the lower ends of the main intervals are +0.0007 (A alone) and +0.004 (v3): all small. The fold-by-fold fade of A's gain is the thing to watch in the later test.
+- Not tried, on purpose, to keep the protocol closed: other thresholds for massive events, other wave definitions, other feature sets, a second tuning round. If the later test is good or bad, those are the next round's questions.
+
+### Mac commands (when the time comes, not now)
+1. git pull
+2. python scripts/archive_api.py ... (refresh the archive as in the README; token in the environment, as always)
+3. python scripts/train_v3.py (rebuilds models/v3 from results/round22/selection.json; needs `pip install xgboost`)
+4. python scripts/score_v3.py (after 2026-11-03 there will be 14 full days; before that it says "too early")

@@ -265,6 +265,7 @@ def main():
     lookback_complete = ~touches(rows, OFFICIAL_OUTAGES, before=pd.Timedelta(days=7), after=pd.Timedelta(0))
     y_now = rows["now"]
 
+    frozen = {"oblasts": oblasts, "thresholds": {}, "logit_weights": {}}  # saved for scripts/forward_test.py
     results, calibration, importance, base_rates, decomposition = [], [], {}, {}, []
     reliability, wins, lowest_bin = {}, [], None
     for H in HORIZONS:
@@ -288,6 +289,8 @@ def main():
         final.save_model(str(MODELS / f"lgbm_b_start_h{H}.txt"))
         frequency_table(rows[m["train"]], f"b_start_{H}").rename("rate").reset_index().to_csv(
             MODELS / f"frequency_b_start_h{H}.csv", index=False)
+        frozen["thresholds"][str(H)] = {}
+        frozen["logit_weights"][str(H)] = [float(v) for v in w]
         info["trees"][str(H)] = int(trees)
         info["train_rows"][str(H)] = int(m["train"].sum())
 
@@ -305,11 +308,16 @@ def main():
             for name, (s_test, s_week) in predictors.items():
                 assert s_test[test].notna().all(), (name, col)
                 thr = None if s_week is None else best_f1_threshold(y[m["last_week"]], s_week[m["last_week"]])
+                if target == "b_start":
+                    frozen["thresholds"][str(H)][name] = thr
                 for period, mask in periods.items():
                     row = summarize(y[mask], s_test[mask], rows.loc[mask, "oblast"], thr)
                     results.append({"target": target, "H": H, "predictor": name, "period": period,
                                     "n_test": int(mask.sum()), "base_rate": float(y[mask].mean()), **row})
             if target == "b_start":
+                f4 = feats[H]["freq4w"]
+                wk = m["last_week"] & f4.notna()  # rolling 4-week frequency used as a score: threshold from the same last train week
+                frozen["thresholds"][str(H)]["freq4w"] = best_f1_threshold(y[wk], f4[wk])
                 for name in ["lgbm", "lgbm_2026", "logit", "frequency"]:
                     s = predictors[name][0][test]
                     d = brier_decomposition(y[test], s)
@@ -370,8 +378,11 @@ def main():
         + md_table(by_period) + "\n")
     wrote(OUT / "test_table_by_period.md")
 
-    br = pd.DataFrame(base_rates).sort_values("b_start_6", ascending=False)
+    br = pd.DataFrame(base_rates)
     br.index.name = "oblast"
+    # rate first, oblast name second: oblasts with the same rate (three have exactly one new alert) must come out in the same order on every machine,
+    # and the default sort is not stable (a Mac with numpy 2.0.2 swapped two of them)
+    br = br.reset_index().sort_values(["b_start_6", "oblast"], ascending=[False, True], kind="stable").set_index("oblast")
     (OUT / "base_rates_by_oblast.md").write_text(
         "Base rate of (b) new alert starts in (t, t+H] per oblast, test rows (24 days).\n\n"
         + md_table(br.reset_index()) + "\n")
@@ -409,6 +420,7 @@ def main():
     reliability_plot(reliability, FIG / "reliability_h6.png")
     wrote(FIG / "reliability_h6.png")
     (MODELS / "info.json").write_text(json.dumps(info, indent=1) + "\n")
+    (MODELS / "frozen.json").write_text(json.dumps(frozen, indent=1) + "\n")
     print("wrote models/ (LightGBM per H, train-frequency tables, info.json) for scripts/predict.py", flush=True)
     summary(res)
     if not args.verbose:

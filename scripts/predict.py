@@ -2,15 +2,19 @@
 
     python scripts/predict.py --at "2026-09-05 14:00" --oblast Kyivska
     python scripts/predict.py --at "2026-09-05 17:00+03:00" --all
+    python scripts/predict.py --now                      (live, from the Ukraine Alarm API; needs UA_ALARM_TOKEN)
     python scripts/predict.py --now --oblast Kharkivska
+    python scripts/predict.py --now --lang en            (the output and the map in English; Ukrainian is the default)
 
 For origin t (a whole hour, UTC unless the time carries an offset) prints the probability that a new
 alert starts in (t, t+H] for H = 1, 3, 6 (target (b)), from the LightGBM models scripts/evaluate.py
 saved in models/, next to the three baselines and to what actually happened.
 
---now checks the official alert channel (https://t.me/s/air_alert_ua, public page, no token) for anything newer than our
-snapshot. If there is nothing newer, or the channel cannot be reached, it says so in one sentence and shows the forecast for
-the latest hour we have, labelled as such. It does not turn live posts into forecasts, and there is no other fallback.
+--now forecasts the last completed hour from the Ukraine Alarm API instead (scripts/live_api.py): it tops up data/api_archive/ (the days not saved yet and the last
+three), refuses and names the missing days if it cannot get a complete history (no scaling, no filling), and prints every oblast's probability for H = 1, 3, 6 and whether
+it is at or above the frozen threshold, sorted by H = 1. Needs your token in the environment variable UA_ALARM_TOKEN and the network; the models are the frozen ones.
+
+Both --at and --now also write output/forecast_map.html (git-ignored): a self-contained map of all oblasts for the three horizons (scripts/forecast_map.py).
 
 The inputs are recomputed from the alert rows as they looked at t: only alerts that had started by
 t, with the end of any alert still running at t unknown (the same cut scripts/check_no_peeking.py
@@ -35,6 +39,7 @@ from scripts.check_no_peeking import known_at
 from src.baselines import KYIV, local_hour_weekday
 from src.dataset import EVAL_LOOKBACK, FEATURE_HISTORY, HORIZONS, load_inputs, split
 from src.features import FEATURES, build_features, load_neighbours
+from src.i18n import MONTHS_UK, T, full_name, short_name, sort_key
 from src.load import OFFICIAL_OUTAGES, PERMANENT_ALERT_OBLASTS, data_end
 from src.panel import official_episodes
 from src.targets import make_rows, touches, y_start
@@ -66,44 +71,7 @@ def load_models():
     return info, boosters, freq
 
 
-CHANNEL_URL = "https://t.me/s/air_alert_ua"
-SNAPSHOT_MARGIN = pd.Timedelta(hours=2)  # the channel's last posts open alerts that the csv cannot hold yet (no end)
-
-
-def channel_newest_post(url=CHANNEL_URL, timeout=10):
-    """(time of the newest post on the channel's public page, None) or (None, short reason)."""
-    import re
-    import urllib.request
-    reason = "unknown"
-    for attempt in range(2):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ukraine-air-alerts course project (one request)"})
-            page = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "replace")
-            times = re.findall(r'<time datetime="([^"]+)"', page)
-            if times:
-                return pd.Timestamp(times[-1]).tz_convert("UTC"), None
-            reason = "the page had no posts"
-        except Exception as e:  # network down, blocked, reset, timeout, bad page: all end in the same fallback
-            reason = 'timed out' if 'timed out' in str(e).lower() else 'network error' if isinstance(e, OSError) else type(e).__name__
-        if attempt == 0:
-            import time
-            time.sleep(2)
-    return None, reason
-
-
-def now_notice(newest, reason, snapshot_last, latest):
-    """One plain sentence: what the channel says about 'now', and that the forecast shown is for the latest hour we have."""
-    shown = f"here is the forecast for the latest hour we have, {latest:%Y-%m-%d %H:%M} UTC, which is not now"
-    if newest is None:
-        return f"Could not reach the official alert channel ({reason}), so we cannot check for newer data; {shown}."
-    if newest > snapshot_last + SNAPSHOT_MARGIN:
-        return (f"The official alert channel has posts newer than our snapshot (up to {newest:%Y-%m-%d %H:%M} UTC), but this version "
-                f"cannot turn live posts into forecasts yet; {shown}.")
-    return (f"The official alert channel has posted nothing since {newest:%Y-%m-%d %H:%M} UTC, which is where our data ends too, "
-            f"so no newer official data exists; {shown}.")
-
-
-def parse_origin(text):
+def parse_origin(text, lang="en"):
     bad = f'Cannot read --at "{text}". Use e.g. "2026-09-05 14:00" (UTC) or "2026-09-05 17:00+03:00".'
     try:
         ts = pd.to_datetime(text, format="ISO8601")  # ISO only: "05.09.2026" would be read as 9 May
@@ -113,8 +81,7 @@ def parse_origin(text):
         fail(bad)
     ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
     t = ts.floor("h")
-    note = None if t == ts else (f"Forecasts are made on the hour: using {t:%H:%M} UTC, the last whole hour "
-                                 f"before {ts:%H:%M:%S} UTC.")
+    note = None if t == ts else T("round_note", lang, t=t, ts=ts)
     return t, note
 
 
@@ -136,39 +103,29 @@ def resolve_oblast(name, oblasts):
     fail(f'--oblast "{name}" {what}. Choose from: {", ".join(oblasts)}.')
 
 
-def status_lines(t, first, end, test_start, oblast_any):
+def status_lines(t, first, end, test_start, oblast_any, lang="en"):
     """Is t a forecast or a training hour, and is anything about its data unusual?"""
     one = make_rows([oblast_any], t, t)
     in_test = {H: bool(split(one, first, end, test_start, H, EVAL_LOOKBACK)["test"].iloc[0]) for H in HORIZONS}
     cutoff = f"{test_start:%Y-%m-%d %H:%M} UTC"
     tested = [H for H in HORIZONS if in_test[H]]
     if t < test_start:
-        lines = [f"TRAINING PERIOD: the models were fitted on data up to {cutoff}, which includes this hour and "
-                 "what followed it. These numbers are not forecasts."]
+        lines = [T("st_train", lang, cutoff=cutoff)]
     elif len(tested) == len(HORIZONS):
-        lines = [f"After the end of training ({cutoff}): the models never saw this hour, so this is a real "
-                 "forecast, inside the 24-day test window."]
+        lines = [T("st_after_all", lang, cutoff=cutoff)]
     elif tested:
         rest = [H for H in HORIZONS if not in_test[H]]
-        lines = [f"After the end of training ({cutoff}): the models never saw this hour, so this is a real "
-                 f"forecast. It is a test row for H = {', '.join(map(str, tested))}; for H = "
-                 f"{', '.join(map(str, rest))} the window touches the feed outage or passes the end of the data, "
-                 "so it is not scored."]
+        lines = [T("st_after_some", lang, cutoff=cutoff, tested=", ".join(map(str, tested)), rest=", ".join(map(str, rest)))]
     else:
-        lines = [f"After the end of training ({cutoff}): the models never saw this hour, but it is outside the "
-                 "24-day test window (its window or the 24h before it touches the feed outage, or the data ends)."]
+        lines = [T("st_after_none", lang, cutoff=cutoff)]
     if t - first < FEATURE_HISTORY:
-        lines.append("Less than 7 days of data before this hour: the history features are incomplete.")
+        lines.append(T("st_short", lang))
     if touches(one, OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=pd.Timedelta(0)).any():
-        lines.append(f"This hour is inside the masked official feed outage ({OUTAGES}): alert data are missing or "
-                     "incomplete, so the inputs and the outcome are not reliable.")
+        lines.append(T("st_out_in", lang, outages=OUTAGES))
     elif touches(one, OFFICIAL_OUTAGES, before=EVAL_LOOKBACK, after=pd.Timedelta(0)).any():
-        lines.append(f"The last 24 hours overlap the feed outage ({OUTAGES}): the 6h/24h features and the time "
-                     "since the last alert come from partial data, and no training or test row has inputs like "
-                     "these. Treat the numbers with care.")
+        lines.append(T("st_out_24", lang, outages=OUTAGES))
     elif touches(one, OFFICIAL_OUTAGES, before=pd.Timedelta(days=7), after=pd.Timedelta(0)).any():
-        lines.append(f"The 7-day lookback overlaps the feed outage ({OUTAGES}): those features are computed "
-                     "over the observed hours only, as on Sep 4-5 in the test window.")
+        lines.append(T("st_out_7", lang, outages=OUTAGES))
     return lines
 
 
@@ -198,43 +155,57 @@ def forecast(t, official, raions, episodes, first, end, boosters, freq):
     return table
 
 
-def span(gap):
+def span(gap, lang="en"):
     """'22 minutes', '1 h 20 min'"""
     mins = int(round(gap.total_seconds() / 60))
     if mins < 60:
-        return f"{mins} minutes"
+        return T("span_min", lang, n=mins)
     if mins < 48 * 60:
-        return f"{mins // 60} h {mins % 60:02d} min"
-    return f"{mins // 1440} days {mins % 1440 // 60} h"
+        return T("span_hm", lang, h=mins // 60, m=mins % 60)
+    return T("span_dh", lang, d=mins // 1440, h=mins % 1440 // 60)
 
 
-def plain_one(r, when, t, nxt):
+def when_text(local, lang="en"):
+    """'15:00 Kyiv time on 5 Sep' / '15:00 за київським часом, 5 вересня'"""
+    month = MONTHS_UK[local.month - 1] if lang == "uk" else f"{local:%b}"
+    return T("when", lang, hm=f"{local:%H:%M}", day=local.day, month=month)
+
+
+def plain_one(r, when, t, nxt, lang="en"):
     """One plain sentence for one oblast: the three probabilities and what happened."""
     pct = lambda v: f"{100 * v:.0f}%"
-    name = r["oblast"].replace(" oblast", "")
-    head = (f"{name}, {when}: {pct(r['model_1'])} chance a new alert starts within 1 hour, "
-            f"{pct(r['model_3'])} within 3, {pct(r['model_6'])} within 6.")
+    name = short_name(r["oblast"], lang)
+    head = T("one_head", lang, name=name, when=when, p1=pct(r["model_1"]), p3=pct(r["model_3"]), p6=pct(r["model_6"]))
     gap = None if nxt is None else nxt - t
     down = touches(make_rows([r["oblast"]], t, t), OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=pd.Timedelta(hours=6)).any()
     if gap is not None and gap <= pd.Timedelta(hours=6):
-        tail = f"It did start, {span(gap)} later" + (" (the feed was down for part of this window, so the real start may be earlier)." if down else ".")
+        tail = T("one_started", lang, gap=span(gap, lang)) + (T("one_started_down", lang) if down else ".")
     elif r["happened_6"] >= 0:
-        tail = "No new alert started within 6 hours" + (f"; the next came {span(gap)} later." if gap is not None else ".")
+        tail = T("one_none", lang) + (T("one_next", lang, gap=span(gap, lang)) if gap is not None else ".")
     else:
-        tail = "What happened next is not known (the data ends or the feed was down)."
+        tail = T("one_unknown", lang)
     return f"{head} {tail}"
 
 
-def plain_all(table, when):
+def plain_all(table, when, lang="en"):
     """One plain sentence for every oblast: who is highest within 1 hour, and how many alerts did start."""
     pct = lambda v: f"{100 * v:.0f}%"
     top = table.sort_values("model_1", ascending=False).head(3)
-    names = ", ".join(f"{o.replace(' oblast', '')} {pct(v)}" for o, v in zip(top["oblast"], top["model_1"]))
+    names = ", ".join(f"{short_name(o, lang)} {pct(v)}" for o, v in zip(top["oblast"], top["model_1"]))
     known = (table["happened_1"] >= 0).all()
-    outcome = (f" A new alert did start within 1 hour in {int((table['happened_1'] == 1).sum())} of {len(table)} oblasts."
-               if known else "")
-    return (f"All {len(table)} oblasts, {when}: chance that a new alert starts within 1, 3 and 6 hours (table below). "
-            f"Highest within 1 hour: {names}.{outcome}")
+    outcome = T("all_outcome", lang, k=int((table["happened_1"] == 1).sum()), n=len(table)) if known else ""
+    return T("all_text", lang, n=len(table), when=when, names=names, outcome=outcome)
+
+
+def write_replay_map(t, round_note, status, map_rows, lang="uk"):
+    """output/forecast_map.html for a past hour: the round-13 model (models/), the status lines of this script, the forward-test calibration note."""
+    from scripts import forecast_map
+    from scripts.live_api import calibration_note, model_version, now_utc
+    thr = {H: json.loads((MODELS / "frozen.json").read_text())["thresholds"][str(H)]["lgbm"] for H in HORIZONS}
+    note = calibration_note("v1", lang, percent=True)  # the page shows probabilities as percent only
+    notes = ([round_note] if round_note else []) + status + ([note] if note else [])
+    forecast_map.write_or_warn(dict(origin=t, made=now_utc(), mode="replay", history=None, model="v1", version=model_version("v1"), thresholds=thr, notes=notes, rows=map_rows, lang=lang,
+                                    model_text=T("map_replay", lang)))
 
 
 def main():
@@ -244,15 +215,36 @@ def main():
     when = ap.add_mutually_exclusive_group(required=True)
     when.add_argument("--at", help='forecast origin, e.g. "2026-09-05 14:00" (UTC) or '
                                    '"2026-09-05 17:00+03:00"; rounded down to the hour')
-    when.add_argument("--now", action="store_true", help="check the official channel for newer data; if there is none "
-                                                          "(or it cannot be reached) say so and show the latest hour we have")
-    who = ap.add_mutually_exclusive_group(required=True)
+    when.add_argument("--now", action="store_true", help="live forecast for the last completed hour from the Ukraine Alarm API (needs UA_ALARM_TOKEN in "
+                                                          "the environment); every oblast unless --oblast is given")
+    ap.add_argument("--lang", choices=["en", "uk"], default="uk", help="language of the output and of the map: uk (Ukrainian, the default) or en (English); error messages stay English")
+    ap.add_argument("--token-from-keychain", action="store_true", help="with --now: read the Ukraine Alarm token from the macOS keychain (item ukraine-air-alerts.ukrainealarm-token) instead of the environment variable; "
+                                                                      "this is how the hourly job runs")
+    ap.add_argument("--model", choices=["v1", "v2"], help="with --now: which model to use (default: the one the v2 decision rule chose, results/v2/decision.json)")
+    who = ap.add_mutually_exclusive_group()
     who.add_argument("--oblast", help='oblast name or a unique start of it, e.g. "Kyivska", "Kyiv City", "Lviv"')
     who.add_argument("--all", action="store_true", help="every oblast, one row each")
     args = ap.parse_args()
+    if args.at and not (args.oblast or args.all):
+        ap.error("--at needs --oblast or --all")
+    if args.token_from_keychain and not args.now:
+        ap.error("--token-from-keychain only applies to --now")
+    if args.model and not args.now:
+        ap.error("--model only applies to --now (--at uses the round-13 model on the official data)")
+    if args.now:
+        load_models()  # the frozen models must be there (scripts/evaluate.py writes them)
+        from scripts.live_api import live_forecast
+        token = None
+        if args.token_from_keychain:
+            from src import keychain
+            token = keychain.get("alarm_token")
+            if not token:
+                fail(f"Cannot read the Ukraine Alarm token from the keychain (item {keychain.SERVICES['alarm_token']}). Put it there first, see docs/DETAILS.md, section \"The alert bot\".")
+        sys.exit(live_forecast(args.oblast, lambda name, names: resolve_oblast(name, sorted(names)), args.model, args.lang, token))
 
     info, boosters, freq = load_models()
-    t, round_note = (None, None) if args.now else parse_origin(args.at)
+    lang = args.lang
+    t, round_note = parse_origin(args.at, lang)
     official, raions = load_inputs()
     oblasts = sorted(official["oblast"].unique())
     first, end = official["start"].min().ceil("D"), data_end(official)
@@ -260,12 +252,6 @@ def main():
         fail("models/ was fitted on a different data snapshot. Run `python scripts/evaluate.py` again.")
     test_start = pd.Timestamp(info["test_start"])
     last = end - pd.Timedelta(hours=1)
-    notice = None
-    if args.now:
-        newest, reason = channel_newest_post()
-        snapshot_last = max(official["start"].max(), official["end"].max())
-        notice = now_notice(newest, reason, snapshot_last, last)
-        t = last
     if not first <= t <= last:
         fail(f"--at must be between {first:%Y-%m-%d %H:%M} and {last:%Y-%m-%d %H:%M} UTC, the hours covered by "
              f"the official data in data/raw/.")
@@ -273,58 +259,59 @@ def main():
 
     episodes, _ = official_episodes(official, raions=raions)
     table = forecast(t, official, raions, episodes, first, end, boosters, freq)
+    map_rows = [{"oblast": r.oblast, "now": bool(r.now), "p": {H: float(getattr(r, f"model_{H}")) for H in HORIZONS}} for r in table.itertuples()]  # all 24, whatever is chosen
     table = table[table["oblast"].isin(chosen)].reset_index(drop=True)
+    if lang == "uk":  # the table is in alphabetical order of the names shown, which is not the English order
+        table = table.iloc[sorted(range(len(table)), key=lambda i: sort_key(short_name(table["oblast"][i], "uk"), "uk"))].reset_index(drop=True)
 
     local = t.tz_convert(KYIV)
-    when = f"{local:%H:%M} Kyiv time on {local.day} {local:%b}"
-    pct = lambda v: f"{100 * v:.0f}%"
-    yn = lambda v: {1: "yes", 0: "no", -1: "n/a"}[int(v)]
-    if notice:
-        print(textwrap.fill(notice, 100))
-        print()
+    when = when_text(local, lang)
+    hm = f"{local:%H:%M}"
+    yn = lambda v: {1: T("yes", lang), 0: T("no", lang), -1: T("na", lang)}[int(v)]
+    status = status_lines(t, first, end, test_start, oblasts[0], lang)
     if args.all:
-        print(textwrap.fill(plain_all(table, when), 100))
+        print(textwrap.fill(plain_all(table, when, lang), 100))
     else:
         r = table.iloc[0]
         starts = episodes.loc[(episodes["oblast"] == r["oblast"]) & (episodes["start"] > t), "start"].sort_values()
         nxt = starts.iloc[0] if len(starts) and starts.iloc[0] < end else None
-        print(textwrap.fill(plain_one(r, when, t, nxt), 100))
+        print(textwrap.fill(plain_one(r, when, t, nxt, lang), 100))
     if t < test_start:
-        print("This hour was part of the training data, so this is not a real forecast.")
+        print(T("training_note", lang))
     print()
-    print(f"{'All oblasts' if args.all else chosen[0]}, origin {t:%Y-%m-%d %H:%M} UTC ({local:%H:%M} Kyiv time)")
-    for line in ([round_note] if round_note else []) + status_lines(t, first, end, test_start, oblasts[0]):
+    print(T("at_header", lang, who=T("all_oblasts", lang) if args.all else full_name(chosen[0], lang), t=t, hm=hm))
+    for line in ([round_note] if round_note else []) + status:
         print(line)
-    print(f"Inputs: only alerts known at {t:%H:%M} UTC; neighbours from the hour before. Target: a new alert "
-          "starts within the next H hours.")
+    print(T("inputs", lang, t=t))
     if args.all:
-        print("Columns per H: model = LightGBM probability; yday = same hour yesterday; freq = train frequency; "
-              "now = same as now (one column for all H);\nhappened = a new alert started (n/a: after the end "
-              "of the data or in the feed outage).\n")
-        out = pd.DataFrame({"oblast": table["oblast"].str.replace(" oblast", "", regex=False), "now": table["now"]})
+        print(T("columns_help", lang))
+        out = pd.DataFrame({T("col_oblast", lang): table["oblast"].map(lambda o: short_name(o, lang)), T("col_now", lang): table["now"]})
         for H in HORIZONS:
-            out[f"{H}h model"] = table[f"model_{H}"].map("{:.3f}".format)
-            out[f"{H}h yday"] = table[f"yday_{H}"].map(lambda v: "n/a" if v < 0 else str(int(v)))
-            out[f"{H}h freq"] = table[f"freq_{H}"].map("{:.3f}".format)
-            out[f"{H}h happened"] = table[f"happened_{H}"].map(yn)
+            out[T("col_model", lang, H=H)] = table[f"model_{H}"].map("{:.3f}".format)
+            out[T("col_yday", lang, H=H)] = table[f"yday_{H}"].map(lambda v: T("na", lang) if v < 0 else str(int(v)))
+            out[T("col_freq", lang, H=H)] = table[f"freq_{H}"].map("{:.3f}".format)
+            out[T("col_happened", lang, H=H)] = table[f"happened_{H}"].map(yn)
         print(out.to_string(index=False))
+        write_replay_map(t, round_note, status, map_rows, lang)
         return
 
-    print(f"Under alert at {t:%H:%M} UTC: {yn(r['now'])}.\n")
-    rows = [{"new alert within": f"{H} h", "model": f"{r[f'model_{H}']:.3f}", "same as now": int(r["now"]),
-             "same hour yesterday": "n/a" if r[f"yday_{H}"] < 0 else int(r[f"yday_{H}"]),
-             "train frequency": f"{r[f'freq_{H}']:.3f}", "happened": yn(r[f"happened_{H}"])} for H in HORIZONS]
+    print(T("under_alert_at", lang, t=t, yn=yn(r["now"])))
+    c = T("one_cols", lang)
+    rows = [{c[0]: T("one_h", lang, H=H), c[1]: f"{r[f'model_{H}']:.3f}", c[2]: int(r["now"]),
+             c[3]: T("na", lang) if r[f"yday_{H}"] < 0 else int(r[f"yday_{H}"]),
+             c[4]: f"{r[f'freq_{H}']:.3f}", c[5]: yn(r[f"happened_{H}"])} for H in HORIZONS]
     print(pd.DataFrame(rows).to_string(index=False))
     if any(r[f"happened_{H}"] < 0 or r[f"yday_{H}"] < 0 for H in HORIZONS):
-        print("n/a: the window is after the end of the data or touches the feed outage.")
+        print(T("na_note", lang))
     if nxt is not None:
         gap = nxt - t
         after = f"{int(gap.total_seconds() // 3600)}:{int(gap.total_seconds() % 3600 // 60):02d}"
-        caveat = (f" (the feed was down {OUTAGES}, so an earlier alert may be missing)"
+        caveat = (T("next_caveat", lang, outages=OUTAGES)
                   if touches(make_rows([r["oblast"]], t, t), OFFICIAL_OUTAGES, before=pd.Timedelta(0), after=gap).any() else "")
-        print(f"\nNext new alert after {t:%H:%M} UTC: {nxt:%Y-%m-%d %H:%M} UTC, {after} later{caveat}.")
+        print(T("next_alert", lang, t=t, nxt=nxt, after=after, caveat=caveat))
     else:
-        print("\nNo new alert after this hour before the official data ends.")
+        print(T("no_next", lang))
+    write_replay_map(t, round_note, status, map_rows, lang)
 
 if __name__ == "__main__":
     if hasattr(signal, "SIGPIPE"):  # `predict.py ... | head` exits quietly instead of a BrokenPipeError

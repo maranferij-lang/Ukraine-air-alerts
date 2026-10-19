@@ -22,17 +22,18 @@ def load_inputs():
     return official, raion_list(official)
 
 
-def build_rows(official=None, raions=None):
+def build_rows(official=None, raions=None, first=None, end=None):
     """Complete hourly grid of (oblast, t) with "now" and both targets for every H.
 
     "now" comes from raw episodes (before joining restarts): at t nobody knows yet whether a
     restart will follow. Targets come from the joined episodes.
+    first, end: override the grid's start and end (default: the first start rounded up to a day, and data_end(official)).
     """
     if official is None:
         official, raions = load_inputs()
     episodes, raw = official_episodes(official, raions=raions)
-    first = official["start"].min().ceil("D")
-    end = data_end(official)
+    first = official["start"].min().ceil("D") if first is None else first
+    end = data_end(official) if end is None else end
     rows = make_rows(official["oblast"].unique(), first, end - pd.Timedelta(hours=1))
     rows["now"] = active_now(rows, raw)
     for H in HORIZONS:
@@ -41,20 +42,22 @@ def build_rows(official=None, raions=None):
     return rows, episodes, raw, first, end
 
 
-def split(rows, first, end, test_start, H, lookback):
+def split(rows, first, end, test_start, H, lookback, outages=OFFICIAL_OUTAGES):
     """Boolean masks for horizon H.
 
     usable:           at least FEATURE_HISTORY of data before t, target window (t, t+H] inside the
                       data, and [t - lookback, t + H] away from known outages
     test:             usable, t >= test_start
     train:            usable, target window closes by test_start
+    outages:          periods the data source did not observe (default: the official feed's outage); rows whose [t - lookback, t + H] touches one are not usable.
+                      Pass () for a source with no unobserved period, e.g. the combined official + API dataset
     last_week:        the last THRESHOLD_DAYS of train (thresholds, early stopping)
     before_last_week: train whose target window closes before last_week starts (validation fit)
     """
     h = pd.Timedelta(hours=H)
     week_start = test_start - pd.Timedelta(days=THRESHOLD_DAYS)
     usable = ((rows["t"] - max(lookback, FEATURE_HISTORY) >= first) & (rows["t"] + h <= end)
-              & ~touches(rows, OFFICIAL_OUTAGES, before=lookback, after=h))
+              & ~touches(rows, outages, before=lookback, after=h))
     test = usable & (rows["t"] >= test_start)
     train = usable & (rows["t"] + h <= test_start)
     last_week = train & (rows["t"] >= week_start)

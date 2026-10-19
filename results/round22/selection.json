@@ -1,0 +1,35 @@
+{
+ "feature_set": "A",
+ "v3": {
+  "family": "xgb",
+  "config": "X4",
+  "features": "A",
+  "feature_columns": [
+   "own_cover_10m",
+   "own_cover_30m",
+   "own_cover_1h",
+   "raion_frac_now",
+   "raion_frac_max_1h",
+   "raion_starts_30m",
+   "nat_now",
+   "nat_max_1h",
+   "nat_max_3h",
+   "nat_starts_1h",
+   "nat_starts_3h",
+   "up_any_30m",
+   "up_any_60m",
+   "up_new_60m"
+  ],
+  "trees": {
+   "1": 507,
+   "3": 419,
+   "6": 223
+  },
+  "auc_mean_diff_vs_v2_reference": 0.017123647412348324,
+  "folds_ahead": 6,
+  "auc_mean_ci": [
+   0.003754022496430732,
+   0.030042165420574026
+  ]
+ }
+}

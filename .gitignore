@@ -17,3 +17,19 @@ data/telegram/cache/
 
 # upstream parser files fetched by scripts/source_check.py
 data/source_check/upstream/
+
+# raw answers of scripts/api_probe.py (the Ukraine Alarm API); what to commit is decided by hand
+data/api_raw/
+
+# the combined official + API dataset: rebuilt by scripts/build_combined.py (about 22 MB); data/combined/MANIFEST.md is committed
+data/combined/alerts_combined.csv
+
+# the forecast map written by scripts/predict.py (--now, --at): scripts/forecast_map.py
+output/
+
+# the full AI conversation log: submitted separately, not part of the repository
+ai-log.txt
+
+# hourly weather per unit centre (round 22): scripts/fetch_weather.py re-downloads it; data/weather/MANIFEST.md is committed
+data/weather/*.csv
+catboost_info/
