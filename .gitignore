@@ -29,3 +29,7 @@ output/
 
 # the full AI conversation log: submitted separately, not part of the repository
 ai-log.txt
+
+# hourly weather per unit centre (round 22): scripts/fetch_weather.py re-downloads it; data/weather/MANIFEST.md is committed
+data/weather/*.csv
+catboost_info/

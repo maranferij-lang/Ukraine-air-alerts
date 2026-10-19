@@ -13,6 +13,7 @@ The long version of the [README](../README.md): the data, the targets and baseli
 - [v2: LightGBM trained on the combined dataset](#v2-lightgbm-trained-on-the-combined-dataset): the round-16 model, the held-out comparison with frozen v1, the decision rule.
 - [The forecast map](#the-forecast-map): `output/forecast_map.html`, written by `predict.py --now` and `--at`: a dark, map-first product page, Ukrainian by default.
 - [The alert bot](#the-alert-bot): a personal Telegram message when a watched oblast crosses its threshold; the keychain; the hourly launchd job.
+- [Round 22: trying to improve the model](#round-22-trying-to-improve-the-model-v3-candidate-development-only): finer timing features, massive events and weather as ablations, XGBoost and CatBoost next to LightGBM, one candidate (v3) and the scorer for the later test; v2 unchanged.
 - [Limitations and what we would do next](#limitations-and-what-we-would-do-next)
 - [Run order](#run-order): every script, in order.
 - [Definitions](#definitions): oblast, episodes, the hourly panel.
@@ -703,6 +704,62 @@ Round 20. A personal Telegram bot: after the hourly `predict.py --now`, a messag
 - **Flags:** `--test` sends one test message (no forecast); `--dry-run` prints what would be sent and changes nothing; `--check`; `--find-chat-id`; `--config`, `--forecast`, `--state` for other files.
 - **Tests:** `python scripts/check_alert_bot.py` (offline, about a minute): the config and its mistakes; the message in summer and winter; the rule in every case above; the bot over real HTTP against a fake Telegram (sent once, never twice, retried after a 500, a stale forecast, missing keychain items, a wrong chat id or token, no server at all, `--test`, `--find-chat-id`, `--check`, `--dry-run`); that no output, log, state file, page, plist or keychain call contains a secret and that the keychain is only ever asked with a bare `-w`; the hourly job's order and logging; the plist; the install and uninstall scripts with a fake `launchctl` and a fake keychain; and the whole chain (fake Ukraine Alarm API, `predict.py --now` with the token from the fake keychain, `last_forecast.json`, the bot, the fake Telegram). Breaking the rule or printing the Telegram address makes it fail. **Not tested here:** the real Telegram, the real keychain and launchd (this machine has none); the first run on your Mac is the test of those.
 
+## Round 22: trying to improve the model (v3 candidate, development only)
+
+Protocol, selection rules and every later deviation are in `PROCESS_LOG.md` (Round 22); the protocol was committed before any number existed. **v2 and `predict.py --now` are unchanged.** Nothing here is evidence that a better model exists: it is a development result on 84 days, and the real test is data after 2026-10-19 that did not exist when the choices were made.
+
+**Development design.** Rolling-origin validation inside 2026: six 2-week folds (2026-07-06 to 2026-09-27), each trained on everything whose target window closed before the fold, early stopping on the week before it. The window 2026-09-28 to 10-17 was not used for any choice. The reference is "v2-reference": v2's recipe (the 14 features, its LightGBM settings) retrained per fold. Every cell is within-oblast AUC / Brier; the three simple rules are scored on the same rows (the train frequency is fitted on each fold's training rows).
+
+**New feature groups** (`src/features_extra.py`, checked by `scripts/check_features_extra.py`: a hand-computed example, the massive-event rule, and a leakage check that cuts the data at each origin and compares every new feature, 30 origins, 0 cells differ, with a negative control that does see look-ahead):
+- **A, finer timing (14):** 10-minute-bin presence of the oblast over the last 10, 30 and 60 minutes, the share of its raions under alert now and at most over the last hour, raion alerts started in the last 30 minutes, the number of oblasts under alert nationwide in the last 10-minute bin and at most over 1 and 3 hours, oblast alert starts nationwide in the last 1 and 3 hours, and how the wave moves (the share of east and south neighbours that were under alert in the last 30 and 60 minutes, and how many of them are new in the last hour).
+- **B, massive events (3):** hours since the last event with 15 or more of the 24 units under alert at once, how many such events in 14 days, and whether one is on now.
+- **C, weather (4):** wind, cloud cover and precipitation at the oblast centre, only stamps up to the origin hour (Open-Meteo Historical Weather API, ERA5-based; `scripts/fetch_weather.py`; visibility is accepted by the API but returned empty, so it is not used). A reanalysis value for hours up to t is an upper bound of what a live system could have.
+
+**Which group helps** (added to the base, LightGBM, mean over H = 1, 3, 6; pooled out-of-fold rows; day bootstrap, 1,000 resamples):
+
+| group | AUC diff (mean of H) | 95% day-bootstrap | Brier diff (mean of H) | folds ahead (of 6) | (i) CI above 0 | (ii) Brier not worse | (iii) 4+ folds | ADOPTED |
+|---|---|---|---|---|---|---|---|---|
+| A | +0.0150 | [+0.0007, +0.0297] | -0.0011 | 6 | yes | yes | yes | yes |
+| B | -0.0095 | [-0.0192, +0.0009] | +0.0006 | 2 | no | no | no | no |
+| C | -0.0007 | [-0.0071, +0.0059] | -0.0002 | 2 | no | yes | no | no |
+
+Only **A** passes the rule. Its gain is positive in all six folds but shrinks over time (AUC difference per fold, mean over H: +0.042, +0.028, +0.029, +0.012, +0.022, +0.004 for F1 to F6), and the lower end of its interval is only +0.0007. Pieces of A added alone (descriptive, no rule uses them):
+
+| block | AUC diff (mean of H) | 95% day-bootstrap | Brier diff (mean of H) | folds ahead (of 6) |
+|---|---|---|---|---|
+| Aown | +0.0077 | [+0.0040, +0.0117] | -0.0012 | 6 |
+| Anat | +0.0108 | [-0.0029, +0.0252] | -0.0000 | 5 |
+| Awave | +0.0004 | [-0.0042, +0.0054] | -0.0001 | 3 |
+
+The own-timing block is the most solid part, the nationwide count is positive but its interval includes zero, and the wave-movement features add nothing. **B and C do not help** (B's point estimate is below zero, with an interval that just touches zero; weather, even as an upper bound, adds nothing measurable).
+
+**Models** (feature set A; 4 fixed configurations per family tuned at H = 3, the winner run at H = 1 and 6). Mean over the six folds, within-oblast AUC / Brier:
+
+| predictor | H = 1 | H = 3 | H = 6 |
+|---|---|---|---|
+| v2-reference (LightGBM, the 14 base features) | 0.664 / 0.093 | 0.615 / 0.146 | 0.605 / 0.137 |
+| LightGBM L1 + group A | 0.691 / 0.091 | 0.641 / 0.145 | 0.620 / 0.136 |
+| LightGBM L3 + A (family winner) | 0.691 / 0.091 | 0.644 / 0.145 | 0.619 / 0.136 |
+| XGBoost X4 + A (family winner, **v3**) | 0.697 / 0.091 | 0.651 / 0.145 | 0.619 / 0.136 |
+| CatBoost C3 + A (family winner) | 0.683 / 0.091 | 0.639 / 0.146 | 0.614 / 0.137 |
+| train frequency | 0.526 / 0.111 | 0.542 / 0.192 | 0.542 / 0.191 |
+| same hour yesterday | 0.508 / 0.200 | 0.515 / 0.288 | 0.513 / 0.263 |
+| same as now | 0.428 / 0.312 | 0.468 / 0.355 | 0.480 / 0.387 |
+
+The families are close: XGBoost X4 against LightGBM L1 on the same features is +0.0022 in mean AUC with a 95% interval of [-0.0025, +0.0066], so the choice of family is not established. Against the v2-reference:
+
+| family | config | features | AUC diff (mean of H) | 95% day-bootstrap | Brier diff | folds ahead | eligible | per_H_auc_diff |
+|---|---|---|---|---|---|---|---|---|
+| lgb | L3 | A | +0.0125 | [+0.0026, +0.0238] | -0.0011 | 5 | yes | +0.0132 / +0.0145 / +0.0098 |
+| xgb | X4 | A | +0.0171 | [+0.0038, +0.0300] | -0.0012 | 6 | yes | +0.0163 / +0.0212 / +0.0138 |
+| cat | C3 | A | +0.0094 | [-0.0022, +0.0217] | -0.0004 | 6 | no ((i) fails, (ii) ok, (iii) ok) | +0.0048 / +0.0160 / +0.0076 |
+
+By the rule written in advance the eligible candidates are LightGBM L3 and XGBoost X4; the highest mean AUC is **XGBoost X4 on group A: v3**, trees (median of the six folds' early-stopped counts) 507, 419 and 223 for H = 1, 3, 6. Its gain over the v2-reference is +0.017 AUC and -0.0012 Brier (mean over H), ahead in all six folds, but again smaller in the last fold (+0.003). Against the simple rules the models were already far ahead (train frequency 0.542 and Brier 0.192 at H = 3 against 0.615 and 0.146 for the reference).
+
+**How far to trust this.** Three feature groups and three families were looked at on the same 84 days, the day bootstrap treats days as independent although alerts come in waves, and the lower ends of the intervals are small. The intervals are therefore too kind. The decision that matters is `scripts/score_v3.py` on days after 2026-10-19 (14 or more full days): **v3 replaces v2 only if** the mean AUC difference over H is above 0 with the lower end of its day-bootstrap interval above 0, the mean Brier difference is at most 0, and v3 is ahead in at least two thirds of the 7-day blocks. Until then v2 stays the default.
+
+**Files.** `results/round22/stage1_groups.md` and `stage2_models.md` (fold-by-fold tables for every predictor and horizon, the rule applied), `stage1_decision.json`, `selection.json`; `scripts/dev_folds.py` (the experiments), `scripts/train_v3.py` (writes `models/v3/`, not committed), `scripts/score_v3.py` (the later comparison), `scripts/fetch_weather.py` and `data/weather/MANIFEST.md` (the CSVs are not committed), `src/candidates.py`, `src/features_extra.py`, `src/geo_centres.py`.
+
 ## Limitations and what we would do next
 Limitations:
 - **Volunteer vs official agreement** fell from κ 0.985 (2022Q3) to 0.448 (2026Q3). About 0.025
@@ -817,6 +874,14 @@ python scripts/check_no_peeking_telegram.py
 - `python scripts/evaluate_telegram.py`: 2026 model with and without Telegram, lag 0 and 15 min -> results/telegram/
 - `python scripts/check_no_peeking_telegram.py`: leakage check for the Telegram columns
 
+**Round 22 (development of a v3 candidate; v2 and `--now` untouched)**
+
+- `python scripts/check_features_extra.py`: the new features (hand-computed example, massive-event rule, weather lookup, leakage check)
+- `python scripts/fetch_weather.py`: hourly weather per oblast centre -> data/weather/ (git-ignored; needs network; the free API has hourly and daily limits and the script resumes where it stopped)
+- `python scripts/dev_folds.py run --configs lgb:L1:base,lgb:L1:A,...`, then `report-stage1`, then the family grids and `report-stage2`: -> results/round22/
+- `python scripts/train_v3.py`: trains the selected candidate -> models/v3/ (git-ignored)
+- `python scripts/score_v3.py`: v3 against v2 on days after 2026-10-19, once there are 14 full days (refresh the archive first) -> results/v3_vs_v2/
+
 **Re-pulling the data** (optional, needs network, replaces the snapshot in the repo; run only if you want new data)
 
 - `python scripts/fetch_data.py`: re-pull (overwrites data/raw/, updates PULL_INFO.md)
@@ -881,6 +946,10 @@ data/api_archive/      Ukraine Alarm API history saved by scripts/archive_api.py
 data/predictions/      the live forecast log (data/predictions/log.csv, appended by scripts/predict.py --now)
 data/combined/         the combined official + API dataset (MANIFEST.md committed, the csv is built by scripts/build_combined.py)
 models/v2/             the v2 production model (written by scripts/train_v2.py, not committed)
+models/v3/             the round-22 candidate (written by scripts/train_v3.py, not committed)
+results/round22/       feature-group ablations, model families, the selection (scripts/dev_folds.py)
+src/features_extra.py  candidate feature groups A, B, C of round 22 (not used by v2); src/candidates.py the three model families; src/geo_centres.py oblast centres
+data/weather/          hourly weather per oblast centre (MANIFEST.md committed, the CSVs are not)
 results/v2/            v2 against frozen v1: tables, bootstrap, calibration, decision.json
 data/geo/             oblast outlines for the forecast map (Natural Earth, public domain; README.md has the source and licence)
 output/               forecast_map.html, last_forecast.json (written by scripts/predict.py) and alert_state.json (the bot's memory); not committed

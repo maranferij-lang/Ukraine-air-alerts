@@ -39,16 +39,16 @@ OUT_DIR = ROOT / "data" / "combined"
 COLUMNS = ["oblast", "raion", "hromada", "level", "start", "end", "source"]
 
 
-def build_combined(archive=ARCHIVE):
-    """Returns (DataFrame with COLUMNS, dict of counts for the manifest)."""
+def build_combined(archive=ARCHIVE, cut=CUT):
+    """Returns (DataFrame with COLUMNS, dict of counts for the manifest). `cut` defaults to CUT (the cut of v1/v2); a later cut is only for scripts/score_v3.py."""
     official, raions = load_inputs()                     # cleaned official rows without Luhansk, fixed raion list
     oblasts = sorted(official["oblast"].unique())
     files = day_files(archive)
     api, _, dropped = to_official_rows(load_api(files), raions, keep_open=True)    # running alerts have end = 2100-01-01 here
     api = api[api["oblast"].isin(oblasts)].drop(columns="regionId")
-    n_after_cut = int((api["start"] >= CUT).sum())
-    n_clipped = int(((api["start"] < CUT) & (api["end"] > CUT)).sum())
-    api = api[api["start"] < CUT].assign(end=lambda d: d["end"].clip(upper=CUT))
+    n_after_cut = int((api["start"] >= cut).sum())
+    n_clipped = int(((api["start"] < cut) & (api["end"] > cut)).sum())
+    api = api[api["start"] < cut].assign(end=lambda d: d["end"].clip(upper=cut))
 
     keep_off = official["end"] <= SPLICE
     keep_api = api["end"] > SPLICE
